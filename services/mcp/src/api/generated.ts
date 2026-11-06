@@ -92876,7 +92876,6 @@ export namespace Schemas {
        * * `Africa/Juba` - Africa/Juba
        * * `Africa/Kampala` - Africa/Kampala
        * * `Africa/Khartoum` - Africa/Khartoum
-       * * `America/Coyhaique` - America/Coyhaique
        * * `Africa/Kigali` - Africa/Kigali
        * * `Africa/Kinshasa` - Africa/Kinshasa
        * * `Africa/Lagos` - Africa/Lagos
@@ -92947,6 +92946,7 @@ export namespace Schemas {
        * * `America/Coral_Harbour` - America/Coral_Harbour
        * * `America/Cordoba` - America/Cordoba
        * * `America/Costa_Rica` - America/Costa_Rica
+       * * `America/Coyhaique` - America/Coyhaique
        * * `America/Creston` - America/Creston
        * * `America/Cuiaba` - America/Cuiaba
        * * `America/Curacao` - America/Curacao
@@ -99356,7 +99356,6 @@ export namespace Schemas {
        * * `Africa/Juba` - Africa/Juba
        * * `Africa/Kampala` - Africa/Kampala
        * * `Africa/Khartoum` - Africa/Khartoum
-       * * `America/Coyhaique` - America/Coyhaique
        * * `Africa/Kigali` - Africa/Kigali
        * * `Africa/Kinshasa` - Africa/Kinshasa
        * * `Africa/Lagos` - Africa/Lagos
@@ -99427,6 +99426,7 @@ export namespace Schemas {
        * * `America/Coral_Harbour` - America/Coral_Harbour
        * * `America/Cordoba` - America/Cordoba
        * * `America/Costa_Rica` - America/Costa_Rica
+       * * `America/Coyhaique` - America/Coyhaique
        * * `America/Creston` - America/Creston
        * * `America/Cuiaba` - America/Cuiaba
        * * `America/Curacao` - America/Curacao
@@ -100228,7 +100228,6 @@ export namespace Schemas {
        * * `Africa/Juba` - Africa/Juba
        * * `Africa/Kampala` - Africa/Kampala
        * * `Africa/Khartoum` - Africa/Khartoum
-       * * `America/Coyhaique` - America/Coyhaique
        * * `Africa/Kigali` - Africa/Kigali
        * * `Africa/Kinshasa` - Africa/Kinshasa
        * * `Africa/Lagos` - Africa/Lagos
@@ -100299,6 +100298,7 @@ export namespace Schemas {
        * * `America/Coral_Harbour` - America/Coral_Harbour
        * * `America/Cordoba` - America/Cordoba
        * * `America/Costa_Rica` - America/Costa_Rica
+       * * `America/Coyhaique` - America/Coyhaique
        * * `America/Creston` - America/Creston
        * * `America/Cuiaba` - America/Cuiaba
        * * `America/Curacao` - America/Curacao
