@@ -6222,6 +6222,8 @@ export enum ActivityScope {
     REVIEW_PROJECT_SETTINGS = 'ReviewProjectSettings',
     REVIEW_INSTALLATION_CLAIM = 'ReviewInstallationClaim',
     RECOMMENDATION_RESOLUTION = 'RecommendationResolution',
+    SANDBOX_ENVIRONMENT = 'SandboxEnvironment',
+    SANDBOX_CUSTOM_IMAGE = 'SandboxCustomImage',
 }
 
 export type CommentType = {
