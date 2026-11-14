@@ -64,3 +64,4 @@ signals.0230_monitoring_research_delivery_indexes
 # ignores rows the unique constraint already holds.
 business_knowledge.0029_backfill_knowledge_run_citations
 skills.0012_backfill_skill_search_vectors
+cohorts.0024_backfill_cohort_condition_type
