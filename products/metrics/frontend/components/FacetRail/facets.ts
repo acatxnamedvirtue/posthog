@@ -9,6 +9,7 @@ import {
 } from '~/types'
 
 import { SERVICE_NAME_KEY } from '../../metricsAttributes'
+import { DROPPED_LABELS_ATTRIBUTE } from '../DroppedLabels/droppedLabels'
 
 export interface MetricFacetConfig extends FacetGroupItem {
     /** The metric attribute key the facet lists values for and filters on. */
@@ -29,7 +30,12 @@ const SERVICE_FACET: MetricFacetConfig = {
 export function buildMetricFacets(attributeKeys: string[]): MetricFacetConfig[] {
     const attributeFacets = Array.from(new Set(attributeKeys))
         .filter((key) => !SERVICE_KEYS.has(key))
-        .map((key) => ({ key: `attribute:${key}`, title: key, group: 'Attributes', attributeKey: key }))
+        .map((key) => ({
+            key: `attribute:${key}`,
+            title: key === DROPPED_LABELS_ATTRIBUTE ? 'Removed labels' : key,
+            group: 'Attributes',
+            attributeKey: key,
+        }))
     return [SERVICE_FACET, ...attributeFacets]
 }
 
