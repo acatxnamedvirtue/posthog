@@ -39,7 +39,6 @@ const ORIGINAL_TIMESTAMP_ATTRIBUTES: [&str; 2] =
 /// fingerprint of a series that never had the dropped key.
 pub const DROPPED_LABELS_ATTRIBUTE: &str = "posthog.dropped_labels";
 const HISTOGRAM_SUFFIXES: [&str; 3] = ["_bucket", "_count", "_sum"];
-const COMPONENT_LABELS: [&str; 2] = ["le", "quantile"];
 /// Both row builders copy this resource attribute into `service_name`, which
 /// the fingerprint hashes on its own, so a rule can not drop it.
 const SERVICE_NAME_RESOURCE: &str = "service.name";
@@ -411,7 +410,7 @@ impl LabelCardinality {
             // wait only for the register updates.
             let hashes: Vec<RowHashes> = indices
                 .iter()
-                .map(|&index| self.row_hashes(&rows[index]))
+                .map(|&index| self.row_hashes(&rows[index], kind))
                 .collect();
             let Some(slot) = self.candidates.get(&metric_key) else {
                 continue;
@@ -431,9 +430,18 @@ impl LabelCardinality {
         }
     }
 
-    /// The series hash leaves out the component labels, so the `_bucket`,
-    /// `_count` and `_sum` series of one histogram count as one series.
-    fn row_hashes(&self, row: &KafkaMetricRow) -> RowHashes {
+    /// On remote-write the series hash leaves out `le` on `_bucket` rows and
+    /// `quantile`, so the component series of one classic histogram or summary
+    /// count as one series. On any other row they are ordinary labels.
+    fn row_hashes(&self, row: &KafkaMetricRow, kind: FingerprintKind) -> RowHashes {
+        let component_label = |key: &str| {
+            kind == FingerprintKind::RemoteWrite
+                && match key {
+                    "le" => row.metric_name.ends_with("_bucket"),
+                    "quantile" => true,
+                    _ => false,
+                }
+        };
         let mut series = value_hash(&row.service_name);
         let mut values = Vec::new();
         for (scope, map) in [
@@ -443,7 +451,7 @@ impl LabelCardinality {
             for (key, value) in map {
                 if scope == Scope::Attribute
                     && (ORIGINAL_TIMESTAMP_ATTRIBUTES.contains(&key.as_str())
-                        || COMPONENT_LABELS.contains(&key.as_str()))
+                        || component_label(key))
                 {
                     continue;
                 }
@@ -558,17 +566,29 @@ impl LabelCardinality {
     }
 
     fn merge_rule(&self, rule: Rule) {
-        let mut rules = self.rules.entry(rule.metric_key).or_default();
-        if let Some(existing) = rules
-            .iter_mut()
-            .find(|r| r.scope == rule.scope && r.key_hash == rule.key_hash)
-        {
-            existing.expires_at = existing.expires_at.max(rule.expires_at);
-            return;
+        if let Some(mut rules) = self.rules.get_mut(&rule.metric_key) {
+            if let Some(existing) = rules
+                .iter_mut()
+                .find(|r| r.scope == rule.scope && r.key_hash == rule.key_hash)
+            {
+                existing.expires_at = existing.expires_at.max(rule.expires_at);
+                return;
+            }
         }
+        // Reserve before the entry exists, so a rejected rule leaves no empty
+        // entry behind.
         if self.rule_count.fetch_add(1, Ordering::AcqRel) >= MAX_RULES {
             self.rule_count.fetch_sub(1, Ordering::AcqRel);
             counter!("capture_metrics_label_cardinality_rules_full").increment(1);
+            return;
+        }
+        let mut rules = self.rules.entry(rule.metric_key).or_default();
+        if rules
+            .iter()
+            .any(|r| r.scope == rule.scope && r.key_hash == rule.key_hash)
+        {
+            // Another request added the same rule between the two lookups.
+            self.rule_count.fetch_sub(1, Ordering::AcqRel);
             return;
         }
         rules.push(rule);
@@ -1318,6 +1338,31 @@ mod tests {
     }
 
     #[test]
+    fn le_on_a_gauge_counts_toward_its_series() {
+        let (detector, _rx, _) = detector(Mode::Enforce);
+        let timestamp = Utc::now().timestamp_millis();
+        // `user_id` has 1000 values over 4000 series, a quarter of them.
+        let series: Vec<TimeSeries> = (0..4000)
+            .map(|i| TimeSeries {
+                labels: vec![
+                    label("__name__", "queue_depth"),
+                    label("user_id", &format!("u{}", i / 4)),
+                    label("le", &format!("{}", i % 4)),
+                ],
+                samples: vec![Sample {
+                    value: 1.0,
+                    timestamp,
+                }],
+            })
+            .collect();
+        let (rows, _) = write_timeseries_to_kafka_rows(series, &[]);
+        detector.note_new_series(TOKEN, &rows, &all_rows_new(&rows), RW);
+        detector.observe(TOKEN, &rows, RW);
+
+        assert!(rule_keys(&detector).is_empty());
+    }
+
+    #[test]
     fn new_metric_names_stop_being_tracked_at_the_cap() {
         let mut capped = settings(Mode::Enforce);
         capped.max_tracked_metrics = 5;
@@ -1393,6 +1438,7 @@ mod tests {
         }
 
         assert_eq!(rule_keys(&detector).len(), MAX_RULES);
+        assert_eq!(detector.rules.len(), MAX_RULES);
     }
 
     #[test]
