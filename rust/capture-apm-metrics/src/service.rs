@@ -26,6 +26,7 @@ use serde_json::json;
 use tracing::{debug, error, instrument};
 
 use crate::k8s_resource_attributes::K8sResourceAttributes;
+use crate::label_cardinality::{FingerprintKind, LabelCardinality};
 use crate::series_label_gate::SeriesLabelGate;
 
 #[derive(Clone)]
@@ -35,6 +36,7 @@ pub struct MetricsService {
     pub(crate) max_request_body_size_bytes: usize,
     pub(crate) remote_write_max_expanded_bytes: u64,
     pub(crate) series_label_gate: Arc<SeriesLabelGate>,
+    pub(crate) label_cardinality: Arc<LabelCardinality>,
     pub(crate) k8s_resource_attributes: Arc<K8sResourceAttributes>,
     pub(crate) keep_stale_markers: bool,
 }
@@ -45,12 +47,14 @@ pub struct QueryParams {
 }
 
 impl MetricsService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         kafka_sink: KafkaSink,
         authorizer: Authorizer,
         max_request_body_size_bytes: usize,
         remote_write_max_expanded_bytes: u64,
         series_label_gate: Arc<SeriesLabelGate>,
+        label_cardinality: Arc<LabelCardinality>,
         k8s_resource_attributes: Arc<K8sResourceAttributes>,
         keep_stale_markers: bool,
     ) -> Self {
@@ -60,6 +64,7 @@ impl MetricsService {
             max_request_body_size_bytes,
             remote_write_max_expanded_bytes,
             series_label_gate,
+            label_cardinality,
             k8s_resource_attributes,
             keep_stale_markers,
         }
@@ -175,7 +180,14 @@ pub async fn export_metrics_http(
         }
     }
 
+    service.label_cardinality.observe(token, &rows);
+    service
+        .label_cardinality
+        .apply(token, &mut rows, FingerprintKind::Otlp);
     let (labelled, records_bytes) = service.series_label_gate.decide_metered(token, &mut rows);
+    service
+        .label_cardinality
+        .note_new_series(token, &rows, labelled.new_series_rows());
 
     let row_count = rows.len();
     if let Err(e) = service

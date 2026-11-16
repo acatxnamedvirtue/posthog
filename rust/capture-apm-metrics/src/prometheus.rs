@@ -19,6 +19,7 @@ use serde_json::json;
 use tracing::{debug, error, instrument};
 
 use crate::histogram_assembly::fold_classic_histograms;
+use crate::label_cardinality::FingerprintKind;
 use crate::service::MetricsService;
 
 #[derive(Deserialize)]
@@ -155,7 +156,16 @@ pub async fn export_prometheus_remote_write_http(
     // fingerprint them.
     service.k8s_resource_attributes.apply(&token, &mut rows);
     let mut rows = fold_classic_histograms(rows, &write_request.metadata);
+    // After the fold, so a dropped label leaves each native histogram whole and
+    // the recomputed fingerprint can hash its bound set.
+    service.label_cardinality.observe(&token, &rows);
+    service
+        .label_cardinality
+        .apply(&token, &mut rows, FingerprintKind::RemoteWrite);
     let (labelled, records_bytes) = service.series_label_gate.decide_metered(&token, &mut rows);
+    service
+        .label_cardinality
+        .note_new_series(&token, &rows, labelled.new_series_rows());
     let row_count = rows.len();
 
     if let Err(e) = service

@@ -22,6 +22,14 @@ This binary is the metrics half of [`capture-logs`](../capture-logs/README.md). 
 | METRICS_SERIES_REDIS_PULL_INTERVAL_SECS | 60 | How often the local cache pulls new series from Redis |
 | METRICS_SERIES_CACHE_MAX_ENTRIES | 20000000 | Most series one pod remembers, across all tokens |
 | METRICS_SERIES_CACHE_MAX_ENTRIES_PER_TOKEN | 2000000 | Most series one pod remembers for one token |
+| METRICS_LABEL_CARDINALITY_MODE | shadow | `off`, `shadow` or `enforce` (see below). Shadow finds and shares drop rules but changes no row |
+| METRICS_LABEL_CARDINALITY_VALUE_LIMIT | 10000 | Distinct values one label key of one metric may have in a window before it is dropped |
+| METRICS_LABEL_CARDINALITY_MIN_SHARE | 0.5 | Smallest ratio of a key's distinct values to the metric's distinct series for the key to be dropped |
+| METRICS_LABEL_CARDINALITY_CANDIDATE_MIN_NEW_SERIES | 500 | New series one pod must see for a metric in a window before it measures that metric's labels |
+| METRICS_LABEL_CARDINALITY_MAX_CANDIDATES | 2000 | Most metrics one pod measures at once |
+| METRICS_LABEL_CARDINALITY_MAX_KEYS_PER_METRIC | 32 | Most label keys one pod measures for one metric |
+| METRICS_LABEL_CARDINALITY_RULE_TTL_SECS | 7200 | How long a drop rule lasts after detection last saw its key over half the limit |
+| METRICS_LABEL_CARDINALITY_PROTECTED_KEYS | le,quantile | Comma-separated label keys that are never dropped |
 
 ### Metric series label gate
 
@@ -34,6 +42,20 @@ Pull metrics, all with a `kind` label of `seed` or `periodic`: `capture_metrics_
 Push metrics: `capture_metrics_series_redis_pushed`, `capture_metrics_series_redis_push_failed` (with `outcome` = `timeout` or `error`), and `capture_metrics_series_redis_push_duration_seconds` (with `outcome` = `ok`, `timeout`, or `error`). `capture_metrics_series_redis_queue_full` counts series dropped because the writer's queue of 100,000 was full. The writer uses its own Redis connection, so a large pull page does not hold its batches back. After three flushes or pulls in a row time out, the writer or puller rebuilds its connection, because a half-open socket times out on every command until the kernel gives up on it.
 
 The cache is bounded. When the global or the per-token cap is full, a new series keeps its labels on every row and is not cached or pushed to Redis, until pruning frees a slot. `capture_metrics_series_cache_full` counts those rows, with `cap` = `global` or `token` for the cap that was full. The `token` series also carries the project token that hit the cap, so the project is known without a log lookup. A `token` count with `capture_metrics_series_cache_size` well under the global cap means that token has more live series than `METRICS_SERIES_CACHE_MAX_ENTRIES_PER_TOKEN` allows.
+
+### High cardinality label drop
+
+The service finds label keys that make one metric grow into many series, and removes them before the fingerprint is final. All series that differ only by a dropped key become one series. Detection is per project token and per metric family; the `_bucket`, `_count` and `_sum` names of a classic histogram are one family, so a rule drops the key from all of them.
+
+Detection has two stages. First, the series label gate reports the rows that are new to its cache, which is one row per series per window, and the service counts them per metric family. A family that passes `METRICS_LABEL_CARDINALITY_CANDIDATE_MIN_NEW_SERIES` in one window is measured: every later row of it goes into a HyperLogLog sketch of its series fingerprints and one sketch per label key (attributes and resource attributes separately). A key is flagged when its distinct values pass `METRICS_LABEL_CARDINALITY_VALUE_LIMIT` and are at least `METRICS_LABEL_CARDINALITY_MIN_SHARE` of the distinct series. The share test flags the key that causes the growth, such as `user_id`, and not every key of a large metric. The sketches restart each `METRICS_SERIES_LABEL_INTERVAL_SECS` window and have about 6.5% error.
+
+A flagged key becomes a drop rule. Rules go to Redis (`capture-logs:metric-label-drop-rules:<hour>`, keyed by a hash of token and family, so no token is stored) and every pod pulls them each `METRICS_SERIES_REDIS_PULL_INTERVAL_SECS`. Detection reads rows before the drop, so it keeps measuring a dropped key. A rule is extended while its key stays over half the limit and expires `METRICS_LABEL_CARDINALITY_RULE_TTL_SECS` after that stops. The `posthog.original_timestamp` attributes and the protected keys are never flagged.
+
+In `enforce` mode the service removes the key from the row and computes the fingerprint again from the remaining labels, with the same recipe as the row builders, so a collapsed row joins the series that a row without the key gets. Remote-write applies the drop after the classic histogram fold, so native histograms stay whole. The billed bytes count the labels left after the drop.
+
+A collapsed series holds the samples of every original series. That is correct for delta sums and histograms. Cumulative counters and gauges of the original series are interleaved in one series, so a rate or last value over a collapsed cumulative series is not meaningful. The dropped key exists to stop a cardinality explosion, not to keep those series exact.
+
+Metrics: `capture_metrics_label_cardinality_rules_created` (with `token` and `mode`), `capture_metrics_label_cardinality_rows_dropped` (with `mode`; in shadow mode the rows that would change), `capture_metrics_label_cardinality_candidates` and `capture_metrics_label_cardinality_rules` (gauges), `capture_metrics_label_cardinality_candidates_full`, `capture_metrics_label_cardinality_keys_full`, `capture_metrics_label_cardinality_redis_pushed` and `capture_metrics_label_cardinality_redis_pulls` (with `outcome`). Each new rule is also logged at warn level with the token, family, key and estimates.
 
 ## Classic Prometheus histograms on remote write
 

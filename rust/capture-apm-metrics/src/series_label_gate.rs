@@ -142,6 +142,15 @@ struct Entry {
 #[must_use = "pass to SeriesLabelGate::commit once the rows are written"]
 pub struct LabelledSeries {
     keys: Vec<u64>,
+    rows: Vec<usize>,
+}
+
+impl LabelledSeries {
+    /// Indices of the rows that kept their labels: one row for each series
+    /// that is new to the gate in this window.
+    pub fn new_series_rows(&self) -> &[usize] {
+        &self.rows
+    }
 }
 
 pub struct SeriesLabelGate {
@@ -209,10 +218,11 @@ impl SeriesLabelGate {
     pub fn decide(&self, token: &str, rows: &mut [KafkaMetricRow]) -> LabelledSeries {
         let now = (self.clock)();
         let mut keys = Vec::new();
+        let mut labelled_rows = Vec::new();
         let mut in_batch = HashSet::new();
         let mut skipped = 0u64;
 
-        for row in rows.iter_mut() {
+        for (index, row) in rows.iter_mut().enumerate() {
             let key = gate_key(token, row.series_fingerprint);
             if self.seen_within_window(key, now) || !in_batch.insert(key) {
                 skipped += 1;
@@ -222,11 +232,15 @@ impl SeriesLabelGate {
                 continue;
             }
             keys.push(key);
+            labelled_rows.push(index);
         }
 
         counter!("capture_metrics_series_labels_sent").increment(keys.len() as u64);
         counter!("capture_metrics_series_labels_skipped").increment(skipped);
-        LabelledSeries { keys }
+        LabelledSeries {
+            keys,
+            rows: labelled_rows,
+        }
     }
 
     /// Run [`Self::decide`] and return the billable bytes of `rows` measured before any
