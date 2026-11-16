@@ -16,6 +16,7 @@ import { lemonToast } from 'lib/lemon-ui/LemonToast/LemonToast'
 
 import { toolbarLogger } from '~/toolbar/shared/toolbarLogger'
 import { captureToolbarException, toolbarPosthogJS } from '~/toolbar/shared/toolbarPosthogJS'
+import { registerToolbarRuntime } from '~/toolbar/shared/toolbarRuntime'
 import { TOOLBAR_USER_INTENTS, ToolbarProps, ToolbarUserIntent } from '~/types'
 
 import type { ExperimentIdType } from '../../types'
@@ -471,6 +472,12 @@ export const toolbarConfigLogic = kea<toolbarConfigLogicType>([
     })),
 
     afterMount(({ props, values, actions, cache }) => {
+        cache.unregisterRuntime = registerToolbarRuntime({
+            uiHost: () => values.uiHost,
+            posthog: () => values.posthog,
+            isAuthenticated: () => values.isAuthenticated,
+            authenticate: () => actions.authenticate(),
+        })
         if (!values.ownsPageSession) {
             return
         }
@@ -516,6 +523,7 @@ export const toolbarConfigLogic = kea<toolbarConfigLogicType>([
     }),
 
     beforeUnmount(({ values, cache }) => {
+        cache.unregisterRuntime?.()
         if (cache.hashRetryTimeout !== undefined) {
             clearTimeout(cache.hashRetryTimeout)
         }

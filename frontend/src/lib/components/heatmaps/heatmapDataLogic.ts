@@ -26,9 +26,8 @@ import { lemonToast } from 'lib/lemon-ui/LemonToast/LemonToast'
 import { dateFilterToText } from 'lib/utils/dateFilters'
 import { getAppContext } from 'lib/utils/getAppContext'
 
-import { toolbarConfigLogic } from '~/toolbar/shared/toolbarConfigLogic'
-import { toolbarFetch } from '~/toolbar/shared/toolbarFetch'
 import { ToolbarRequestError } from '~/toolbar/shared/toolbarRequestError'
+import { getToolbarRuntime } from '~/toolbar/shared/toolbarRuntime'
 import { HeatmapElement, HeatmapResponseType } from '~/toolbar/shared/types'
 import { FilterType } from '~/types'
 
@@ -113,7 +112,8 @@ async function fetchHeatmapData(
     let response: Response
     try {
         response = await (props.context === 'toolbar'
-            ? toolbarFetch(apiURL, 'GET')
+            ? // Imported here so the app never ships the toolbar's request code.
+              import('~/toolbar/shared/toolbarFetch').then(({ toolbarFetch }) => toolbarFetch(apiURL, 'GET'))
             : props.exportToken
               ? fetch(apiURL, { headers: { Authorization: `Bearer ${props.exportToken}` } })
               : fetch(apiURL))
@@ -125,7 +125,7 @@ async function fetchHeatmapData(
     }
 
     if (props.context === 'toolbar' && response.status === 403 && options.authenticateOn403) {
-        toolbarConfigLogic.actions.authenticate()
+        getToolbarRuntime()?.authenticate()
     }
 
     if (response.status !== 200) {

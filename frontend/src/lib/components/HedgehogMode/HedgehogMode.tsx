@@ -5,7 +5,7 @@ import { themeLogic } from 'lib/logic/themeLogic'
 import { inStorybook } from 'lib/utils/dom'
 import { lazyWithRetry } from 'lib/utils/retryImport'
 
-import { toolbarConfigLogic } from '~/toolbar/shared/toolbarConfigLogic'
+import { getToolbarRuntime } from '~/toolbar/shared/toolbarRuntime'
 
 import { useShortcut } from '../Shortcuts/useShortcut'
 import { hedgehogModeLogic } from './hedgehogModeLogic'
@@ -20,7 +20,7 @@ export const HedgeHogModeRenderer =
 
 export const getHedgehogModeAssetsUrl = (): string => {
     let path = `/static/hedgehog-mode`
-    const toolbarAPIUrl = toolbarConfigLogic.findMounted()?.values.uiHost
+    const toolbarAPIUrl = getToolbarRuntime()?.uiHost()
 
     if (inStorybook()) {
         // Nothing to do

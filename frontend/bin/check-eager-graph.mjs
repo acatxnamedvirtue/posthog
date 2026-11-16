@@ -145,6 +145,10 @@ const ROOTS = [
             'src/layout/navigation/projectNoticeLogic.tsx',
             // Only impersonating staff see this notice, and it pulls in react-draggable.
             'src/layout/navigation/ImpersonationNotice/ImpersonationNotice.tsx',
+            // The toolbar's session and request code. App modules read a mounted toolbar through
+            // src/toolbar/shared/toolbarRuntime.ts and load toolbarFetch with a dynamic import.
+            'src/toolbar/shared/toolbarConfigLogic.ts',
+            'src/toolbar/shared/toolbarFetch.ts',
             // The cohort saved toast pulls in the workflows audience code and generated API clients.
             'src/scenes/cohorts/cohortSavedToast.ts',
             // The wizard run card opens this drawer on click, and the drawer pulls in quill primitives.

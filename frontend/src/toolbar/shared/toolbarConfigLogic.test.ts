@@ -4,6 +4,7 @@ import { resumeKeaLoadersErrors, silenceKeaLoadersErrors } from '~/initKea'
 import { initKeaTests } from '~/test/init'
 import { canonicalizeApiHost, canonicalizeUiHost, toolbarConfigLogic } from '~/toolbar/shared/toolbarConfigLogic'
 import { toolbarFetch, toolbarUploadMedia } from '~/toolbar/shared/toolbarFetch'
+import { getToolbarRuntime } from '~/toolbar/shared/toolbarRuntime'
 import {
     cleanToolbarAuthHash,
     OAUTH_LOCALSTORAGE_KEY,
@@ -880,6 +881,7 @@ describe('toolbar toolbarConfigLogic', () => {
             logic1.mount()
             logic1.actions.setOAuthTokens('persisted-access', 'persisted-refresh', 'persisted-client')
             logic1.unmount()
+            expect(getToolbarRuntime()).toBeNull()
 
             // Second mount: tokens should be restored from OAuth localStorage
             const logic2 = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
@@ -891,6 +893,7 @@ describe('toolbar toolbarConfigLogic', () => {
                 clientId: 'persisted-client',
                 isAuthenticated: true,
             })
+            expect(getToolbarRuntime()?.isAuthenticated()).toBe(true)
         })
 
         it('handles corrupted OAuth localStorage gracefully', () => {
