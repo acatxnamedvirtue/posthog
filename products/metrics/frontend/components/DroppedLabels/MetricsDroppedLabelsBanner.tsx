@@ -23,7 +23,7 @@ export function MetricsDroppedLabelsBanner(): JSX.Element | null {
     }
 
     return (
-        <LemonBanner type="info" data-attr="metrics-dropped-labels-banner">
+        <LemonBanner type="info">
             <div>
                 PostHog removed {droppedLabels.length === 1 ? 'a label' : 'labels'} from this metric because{' '}
                 {droppedLabels.length === 1 ? 'it has' : 'they have'} too many distinct values:{' '}
