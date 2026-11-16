@@ -17,7 +17,6 @@ import { useOpenTraceDialog } from 'products/tracing/frontend/components/TraceDi
 
 import { MetricsHistogramQueryNode } from '../nodes/MetricsHistogramQueryNode'
 import { MetricsPanel } from '../panels/MetricsPanel'
-import { MetricsDroppedLabelsBanner } from './DroppedLabels/MetricsDroppedLabelsBanner'
 import { type MetricsExemplar } from './MetricsExemplarMarkers'
 import { MetricsPercentileResolutionHint } from './MetricsPercentileResolutionHint'
 import { metricsSamplesLogic } from './metricsSamplesLogic'
@@ -154,9 +153,8 @@ export function MetricsViewerChart(): JSX.Element {
                 {queryLoading && !isHeatmap && <SpinnerOverlay />}
             </div>
             {hasResults && !isHeatmap && !queryError && (
-                <div className="px-3 pb-2 flex flex-col gap-2">
+                <div className="px-3 pb-2">
                     <MetricsPercentileResolutionHint series={queryResults} metricName={metricName} />
-                    <MetricsDroppedLabelsBanner />
                 </div>
             )}
         </>
