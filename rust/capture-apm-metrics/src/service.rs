@@ -16,7 +16,7 @@ use axum::{
 use bytes::Bytes;
 use capture_logs::authorizer::{Authorizer, Signal};
 use capture_logs::kafka::KafkaSink;
-use capture_logs::metric_record::{flatten_metric, KafkaMetricRow};
+use capture_logs::metric_record::{flatten_metric, KafkaMetricRow, LABEL_BYTES};
 use capture_logs::service::{export_success_response, parse_otel_metrics_message};
 use common_compression::{decompress_gzip_capped, has_gzip_magic_header, CompressionError};
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
@@ -181,10 +181,12 @@ pub async fn export_metrics_http(
     }
 
     service.label_cardinality.observe(token, &rows);
-    service
+    let marked_rows = service
         .label_cardinality
         .apply(token, &mut rows, FingerprintKind::Otlp);
     let (labelled, records_bytes) = service.series_label_gate.decide_metered(token, &mut rows);
+    // The dropped-labels marker is ours, so it is not billed.
+    let records_bytes = records_bytes.saturating_sub(marked_rows * LABEL_BYTES);
     service
         .label_cardinality
         .note_new_series(token, &rows, labelled.new_series_rows());

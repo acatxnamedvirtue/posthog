@@ -62,6 +62,11 @@ const EVALUATE_INTERVAL_SECS: i64 = 10;
 /// fingerprint leaves them out as the builders do.
 const ORIGINAL_TIMESTAMP_ATTRIBUTES: [&str; 2] =
     [ORIGINAL_TIMESTAMP_ATTRIBUTE, "$originalTimestamp"];
+/// Enforce mode sets this attribute on every row that lost a label, so the
+/// metrics UI can show which series were combined. The value is the sorted,
+/// comma-joined list of the dropped keys. The fingerprint leaves it out, so a
+/// combined series keeps the fingerprint of a series that never had the key.
+pub const DROPPED_LABELS_ATTRIBUTE: &str = "posthog.dropped_labels";
 const HISTOGRAM_SUFFIXES: [&str; 3] = ["_bucket", "_count", "_sum"];
 const HISTOGRAM_TYPE: &str = "histogram";
 
@@ -401,7 +406,8 @@ impl LabelCardinality {
     }
 
     fn is_protected(&self, scope: Scope, key: &str) -> bool {
-        (scope == Scope::Attribute && ORIGINAL_TIMESTAMP_ATTRIBUTES.contains(&key))
+        (scope == Scope::Attribute
+            && (ORIGINAL_TIMESTAMP_ATTRIBUTES.contains(&key) || key == DROPPED_LABELS_ATTRIBUTE))
             || self.settings.protected_keys.contains(key)
     }
 
@@ -487,12 +493,15 @@ impl LabelCardinality {
         }
     }
 
-    /// Drop the flagged labels from `rows` and compute their fingerprints again
-    /// without them. In shadow mode only count the rows that would change.
-    /// Call it after [`Self::observe`] and before the series label gate.
-    pub fn apply(&self, token: &str, rows: &mut [KafkaMetricRow], kind: FingerprintKind) {
+    /// Drop the flagged labels from `rows`, mark each changed row with
+    /// [`DROPPED_LABELS_ATTRIBUTE`], and compute their fingerprints again
+    /// without the dropped labels. In shadow mode only count the rows that
+    /// would change. Call it after [`Self::observe`] and before the series
+    /// label gate. Returns the number of marked rows, so the caller can take
+    /// the marker off the billed bytes.
+    pub fn apply(&self, token: &str, rows: &mut [KafkaMetricRow], kind: FingerprintKind) -> u64 {
         if self.settings.mode == Mode::Off || self.rules.is_empty() {
-            return;
+            return 0;
         }
         let now = (self.clock)();
         let enforce = self.settings.mode == Mode::Enforce;
@@ -511,7 +520,7 @@ impl LabelCardinality {
             if active.is_empty() {
                 continue;
             }
-            let mut dropped = false;
+            let mut dropped: Vec<&str> = Vec::new();
             for (scope, key) in active {
                 let map = match scope {
                     Scope::Attribute => &mut row.attributes,
@@ -520,12 +529,12 @@ impl LabelCardinality {
                 if !map.contains_key(key) {
                     continue;
                 }
-                dropped = true;
+                dropped.push(key);
                 if enforce {
                     map.remove(key);
                 }
             }
-            if !dropped {
+            if dropped.is_empty() {
                 continue;
             }
             changed += 1;
@@ -533,6 +542,12 @@ impl LabelCardinality {
                 row.series_fingerprint = *recomputed
                     .entry(row.series_fingerprint)
                     .or_insert_with(|| series_fingerprint(row, kind));
+                dropped.sort_unstable();
+                dropped.dedup();
+                // Attribute values are JSON-encoded strings.
+                let marker = serde_json::Value::String(dropped.join(",")).to_string();
+                row.attributes
+                    .insert(DROPPED_LABELS_ATTRIBUTE.to_string(), marker);
             }
         }
 
@@ -542,6 +557,11 @@ impl LabelCardinality {
                 "mode" => self.settings.mode.as_str()
             )
             .increment(changed);
+        }
+        if enforce {
+            changed
+        } else {
+            0
         }
     }
 
@@ -706,6 +726,7 @@ fn series_fingerprint(row: &KafkaMetricRow, kind: FingerprintKind) -> i64 {
     for attribute in ORIGINAL_TIMESTAMP_ATTRIBUTES {
         attributes.remove(attribute);
     }
+    attributes.remove(DROPPED_LABELS_ATTRIBUTE);
     let fingerprint = compute_series_fingerprint(
         &row.metric_name,
         &row.metric_type,
@@ -987,7 +1008,7 @@ mod tests {
         let mut rows = remote_write_rows(1000, true);
         detector.note_new_series(TOKEN, &rows, &all_rows_new(&rows));
         detector.observe(TOKEN, &rows);
-        detector.apply(TOKEN, &mut rows, FingerprintKind::RemoteWrite);
+        let marked = detector.apply(TOKEN, &mut rows, FingerprintKind::RemoteWrite);
 
         let expected = remote_write_rows(1000, false);
         let fingerprints = |rows: &[KafkaMetricRow]| {
@@ -1008,6 +1029,15 @@ mod tests {
         assert!(rows
             .iter()
             .all(|row| !row.attributes.contains_key("user_id")));
+        // The marker is on every collapsed row but not in the fingerprint, so
+        // the fingerprints above still equal those of rows without `user_id`.
+        assert!(rows.iter().all(|row| {
+            row.attributes
+                .get(DROPPED_LABELS_ATTRIBUTE)
+                .map(String::as_str)
+                == Some("\"user_id\"")
+        }));
+        assert_eq!(marked, rows.len() as u64);
     }
 
     #[test]
@@ -1017,9 +1047,13 @@ mod tests {
         let before: Vec<i64> = rows.iter().map(|r| r.series_fingerprint).collect();
         detector.note_new_series(TOKEN, &rows, &all_rows_new(&rows));
         detector.observe(TOKEN, &rows);
-        detector.apply(TOKEN, &mut rows, FingerprintKind::RemoteWrite);
+        let marked = detector.apply(TOKEN, &mut rows, FingerprintKind::RemoteWrite);
 
         assert!(!rule_keys(&detector).is_empty());
+        assert_eq!(marked, 0);
+        assert!(rows
+            .iter()
+            .all(|row| !row.attributes.contains_key(DROPPED_LABELS_ATTRIBUTE)));
         let after: Vec<i64> = rows.iter().map(|r| r.series_fingerprint).collect();
         assert_eq!(before, after);
         assert!(rows

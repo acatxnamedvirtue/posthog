@@ -58,7 +58,7 @@ pub struct KafkaMetricRow {
 }
 
 const POINT_BYTES: u64 = 24;
-const LABEL_BYTES: u64 = 8;
+pub const LABEL_BYTES: u64 = 8;
 const HISTOGRAM_BUCKET_BYTES: u64 = 8;
 
 /// Billable size of one point: 24 bytes, plus 8 bytes for each label and each histogram bucket.

@@ -13,6 +13,7 @@ use capture_logs::endpoints::prometheus::{
     decode_write_request, estimate_expanded_bytes, write_timeseries_to_kafka_rows_with_options,
     RemoteWriteEncoding, RemoteWriteOptions,
 };
+use capture_logs::metric_record::LABEL_BYTES;
 use metrics::counter;
 use serde::Deserialize;
 use serde_json::json;
@@ -159,10 +160,13 @@ pub async fn export_prometheus_remote_write_http(
     // After the fold, so a dropped label leaves each native histogram whole and
     // the recomputed fingerprint can hash its bound set.
     service.label_cardinality.observe(&token, &rows);
-    service
-        .label_cardinality
-        .apply(&token, &mut rows, FingerprintKind::RemoteWrite);
+    let marked_rows =
+        service
+            .label_cardinality
+            .apply(&token, &mut rows, FingerprintKind::RemoteWrite);
     let (labelled, records_bytes) = service.series_label_gate.decide_metered(&token, &mut rows);
+    // The dropped-labels marker is ours, so it is not billed.
+    let records_bytes = records_bytes.saturating_sub(marked_rows * LABEL_BYTES);
     service
         .label_cardinality
         .note_new_series(&token, &rows, labelled.new_series_rows());
