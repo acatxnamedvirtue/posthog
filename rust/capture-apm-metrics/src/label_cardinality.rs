@@ -107,13 +107,13 @@ pub struct Settings {
     pub protected_keys: HashSet<String>,
 }
 
-/// The token is hashed into `metric_key`, so no token reaches Redis.
+/// Rules and candidates hold hashes, not names, so the size of a sender's
+/// metric names and label keys never decides how much memory they keep.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
     pub metric_key: u64,
-    pub family: String,
     pub scope: Scope,
-    pub key: String,
+    pub key_hash: u64,
     /// Not in the Redis member, so every pod that extends a rule updates the
     /// score of one member instead of adding another.
     #[serde(skip)]
@@ -166,21 +166,19 @@ impl Sketch {
 
 struct Candidate {
     token: Arc<str>,
-    family: String,
     window: i64,
     /// Last window in which the family passed stage 1. A candidate that stops
     /// qualifying gives up its slot, unless it has a rule.
     qualified_window: i64,
     series: Sketch,
-    keys: HashMap<(Scope, String), Sketch>,
+    keys: HashMap<(Scope, u64), Sketch>,
     last_evaluated: i64,
 }
 
 impl Candidate {
-    fn new(token: Arc<str>, family: String, window: i64) -> Self {
+    fn new(token: Arc<str>, window: i64) -> Self {
         Self {
             token,
-            family,
             window,
             qualified_window: window,
             series: Sketch::new(),
@@ -204,9 +202,10 @@ struct NewSeriesCount {
     token_hash: u64,
 }
 
-struct RowHashes<'a> {
+struct RowHashes {
     series: u64,
-    values: Vec<(Scope, &'a str, u64)>,
+    /// Scope, key hash and value hash of each label that can be dropped.
+    values: Vec<(Scope, u64, u64)>,
 }
 
 pub struct LabelCardinality {
@@ -219,6 +218,7 @@ pub struct LabelCardinality {
     /// Exact candidate count. `DashMap::len` walks every shard.
     candidate_count: AtomicUsize,
     rules: DashMap<u64, Vec<Rule>>,
+    protected: HashSet<(Scope, u64)>,
     tx: Option<mpsc::Sender<Rule>>,
 }
 
@@ -234,7 +234,23 @@ impl LabelCardinality {
     }
 
     fn build(settings: Settings, tx: Option<mpsc::Sender<Rule>>, clock: Clock) -> Self {
+        let mut protected: HashSet<(Scope, u64)> = settings
+            .protected_keys
+            .iter()
+            .flat_map(|key| {
+                let hash = key_hash(key);
+                [(Scope::Attribute, hash), (Scope::Resource, hash)]
+            })
+            .collect();
+        for key in ORIGINAL_TIMESTAMP_ATTRIBUTES
+            .iter()
+            .chain([&DROPPED_LABELS_ATTRIBUTE])
+        {
+            protected.insert((Scope::Attribute, key_hash(key)));
+        }
+        protected.insert((Scope::Resource, key_hash(SERVICE_NAME_RESOURCE)));
         Self {
+            protected,
             settings,
             clock,
             new_series: DashMap::new(),
@@ -316,7 +332,7 @@ impl LabelCardinality {
                 continue;
             }
             let token_label = token_label.get_or_insert_with(|| Arc::from(token));
-            self.add_candidate(metric_key, token_label, family_name, window);
+            self.add_candidate(metric_key, token_label, window);
         }
         if tracking_full > 0 {
             counter!("capture_metrics_label_cardinality_tracking_full").increment(tracking_full);
@@ -338,7 +354,7 @@ impl LabelCardinality {
         true
     }
 
-    fn add_candidate(&self, metric_key: u64, token: &Arc<str>, family_name: &str, window: i64) {
+    fn add_candidate(&self, metric_key: u64, token: &Arc<str>, window: i64) {
         if self.candidates.contains_key(&metric_key) {
             return;
         }
@@ -347,7 +363,7 @@ impl LabelCardinality {
             counter!("capture_metrics_label_cardinality_candidates_full").increment(1);
             return;
         }
-        let candidate = Candidate::new(Arc::clone(token), family_name.to_string(), window);
+        let candidate = Candidate::new(Arc::clone(token), window);
         if let dashmap::Entry::Vacant(slot) = self.candidates.entry(metric_key) {
             slot.insert(Mutex::new(candidate));
         } else {
@@ -377,12 +393,7 @@ impl LabelCardinality {
             } else if self.rules.contains_key(&metric_key) {
                 // A rule hides the series growth from the gate, so the family
                 // would never pass stage 1 again. The rule keeps it tracked.
-                self.add_candidate(
-                    metric_key,
-                    &token_label,
-                    family(&row.metric_name, kind),
-                    window,
-                );
+                self.add_candidate(metric_key, &token_label, window);
                 groups.entry(metric_key).or_default().push(index);
             }
         }
@@ -406,14 +417,15 @@ impl LabelCardinality {
             }
             if now.saturating_sub(candidate.last_evaluated) >= EVALUATE_INTERVAL_SECS {
                 candidate.last_evaluated = now;
-                self.evaluate(metric_key, &candidate, now);
+                let group: Vec<&KafkaMetricRow> = indices.iter().map(|&i| &rows[i]).collect();
+                self.evaluate(metric_key, &candidate, now, &group);
             }
         }
     }
 
     /// The series hash leaves out the component labels, so the `_bucket`,
     /// `_count` and `_sum` series of one histogram count as one series.
-    fn row_hashes<'a>(&self, row: &'a KafkaMetricRow) -> RowHashes<'a> {
+    fn row_hashes(&self, row: &KafkaMetricRow) -> RowHashes {
         let mut series = value_hash(&row.service_name);
         let mut values = Vec::new();
         for (scope, map) in [
@@ -427,11 +439,12 @@ impl LabelCardinality {
                 {
                     continue;
                 }
+                let key = key_hash(key);
                 let hash = value_hash(value);
                 // Label order is not stable, so the pairs combine with a sum.
                 series = series.wrapping_add(pair_hash(scope, key, hash));
-                if !self.is_protected(scope, key) {
-                    values.push((scope, key.as_str(), hash));
+                if !self.protected.contains(&(scope, key)) {
+                    values.push((scope, key, hash));
                 }
             }
         }
@@ -443,7 +456,7 @@ impl LabelCardinality {
         let max_keys = self.settings.max_keys_per_candidate;
         let mut keys_full = 0u64;
         for (scope, key, hash) in row.values {
-            if let Some(sketch) = candidate.keys.get_mut(&(scope, key.to_string())) {
+            if let Some(sketch) = candidate.keys.get_mut(&(scope, key)) {
                 sketch.insert(hash);
                 continue;
             }
@@ -453,26 +466,24 @@ impl LabelCardinality {
             }
             let mut sketch = Sketch::new();
             sketch.insert(hash);
-            candidate.keys.insert((scope, key.to_string()), sketch);
+            candidate.keys.insert((scope, key), sketch);
         }
         if keys_full > 0 {
             counter!("capture_metrics_label_cardinality_keys_full").increment(keys_full);
         }
     }
 
-    fn is_protected(&self, scope: Scope, key: &str) -> bool {
-        let fixed = match scope {
-            Scope::Attribute => {
-                ORIGINAL_TIMESTAMP_ATTRIBUTES.contains(&key) || key == DROPPED_LABELS_ATTRIBUTE
-            }
-            Scope::Resource => key == SERVICE_NAME_RESOURCE,
-        };
-        fixed || self.settings.protected_keys.contains(key)
-    }
-
     /// An active rule is extended at half the limit, so a key near the limit
     /// does not switch its rule on and off.
-    fn evaluate(&self, metric_key: u64, candidate: &Candidate, now: i64) {
+    /// `group` gives the names for the log line. They are read from this
+    /// request and never kept.
+    fn evaluate(
+        &self,
+        metric_key: u64,
+        candidate: &Candidate,
+        now: i64,
+        group: &[&KafkaMetricRow],
+    ) {
         let ttl = self.settings.rule_ttl.as_secs() as i64;
         let series = candidate.series.estimate();
         for ((scope, key), sketch) in &candidate.keys {
@@ -483,7 +494,9 @@ impl LabelCardinality {
             let existing = self.rules.get(&metric_key).and_then(|rules| {
                 rules
                     .iter()
-                    .find(|rule| rule.scope == *scope && rule.key == *key && rule.expires_at > now)
+                    .find(|rule| {
+                        rule.scope == *scope && rule.key_hash == *key && rule.expires_at > now
+                    })
                     .map(|rule| rule.expires_at)
             });
             let new_rule = match existing {
@@ -504,17 +517,17 @@ impl LabelCardinality {
             };
             let rule = Rule {
                 metric_key,
-                family: candidate.family.clone(),
                 scope: *scope,
-                key: key.clone(),
+                key_hash: *key,
                 expires_at: now + ttl,
             };
             if new_rule {
+                let metric = group.first().map_or("", |row| row.metric_name.as_str());
                 warn!(
                     token = %candidate.token,
-                    family = %rule.family,
+                    metric = %truncated(metric),
                     scope = ?rule.scope,
-                    key = %rule.key,
+                    key = %truncated(key_name(group, *scope, *key).unwrap_or("")),
                     distinct_values = distinct,
                     distinct_series = series,
                     mode = self.settings.mode.as_str(),
@@ -540,7 +553,7 @@ impl LabelCardinality {
         let mut rules = self.rules.entry(rule.metric_key).or_default();
         match rules
             .iter_mut()
-            .find(|r| r.scope == rule.scope && r.key == rule.key)
+            .find(|r| r.scope == rule.scope && r.key_hash == rule.key_hash)
         {
             Some(existing) => existing.expires_at = existing.expires_at.max(rule.expires_at),
             None => rules.push(rule),
@@ -556,7 +569,7 @@ impl LabelCardinality {
         }
         let now = (self.clock)();
         let enforce = self.settings.mode == Mode::Enforce;
-        let mut active_by_name: HashMap<String, Vec<(Scope, String)>> = HashMap::new();
+        let mut active_by_name: HashMap<String, Vec<(Scope, u64)>> = HashMap::new();
         let mut recomputed: HashMap<i64, i64> = HashMap::new();
         let mut changed = 0u64;
 
@@ -570,18 +583,21 @@ impl LabelCardinality {
             if active.is_empty() {
                 continue;
             }
-            let mut dropped: Vec<&str> = Vec::new();
-            for (scope, key) in active {
-                let map = match scope {
-                    Scope::Attribute => &mut row.attributes,
-                    Scope::Resource => &mut row.resource_attributes,
-                };
-                if !map.contains_key(key) {
-                    continue;
-                }
-                dropped.push(key);
-                if enforce {
-                    map.remove(key);
+            let mut dropped: Vec<String> = Vec::new();
+            for (scope, map) in [
+                (Scope::Attribute, &mut row.attributes),
+                (Scope::Resource, &mut row.resource_attributes),
+            ] {
+                let matched: Vec<String> = map
+                    .keys()
+                    .filter(|key| active.contains(&(scope, key_hash(key))))
+                    .cloned()
+                    .collect();
+                for key in matched {
+                    if enforce {
+                        map.remove(&key);
+                    }
+                    dropped.push(key);
                 }
             }
             if dropped.is_empty() {
@@ -615,7 +631,7 @@ impl LabelCardinality {
         }
     }
 
-    fn active_rules(&self, metric_key: u64, now: i64) -> Vec<(Scope, String)> {
+    fn active_rules(&self, metric_key: u64, now: i64) -> Vec<(Scope, u64)> {
         self.rules
             .get(&metric_key)
             .map(|rules| {
@@ -624,9 +640,10 @@ impl LabelCardinality {
                     // A rule from Redis can name a key that this pod now
                     // protects.
                     .filter(|rule| {
-                        rule.expires_at > now && !self.is_protected(rule.scope, &rule.key)
+                        rule.expires_at > now
+                            && !self.protected.contains(&(rule.scope, rule.key_hash))
                     })
-                    .map(|rule| (rule.scope, rule.key.clone()))
+                    .map(|rule| (rule.scope, rule.key_hash))
                     .collect()
             })
             .unwrap_or_default()
@@ -856,13 +873,41 @@ fn token_key(token: &str) -> u64 {
     hasher.finish()
 }
 
-fn pair_hash(scope: Scope, key: &str, value_hash: u64) -> u64 {
+fn pair_hash(scope: Scope, key_hash: u64, value_hash: u64) -> u64 {
     let mut hasher = SipHasher13::new();
     hasher.write_u8(scope as u8);
-    hasher.write(&(key.len() as u64).to_le_bytes());
-    hasher.write(key.as_bytes());
+    hasher.write(&key_hash.to_le_bytes());
     hasher.write(&value_hash.to_le_bytes());
     hasher.finish()
+}
+
+/// Separate keys from `value_hash`, so a key and a value with equal text get
+/// different hashes.
+fn key_hash(key: &str) -> u64 {
+    let mut hasher = SipHasher13::new_with_keys(0, 1);
+    hasher.write(key.as_bytes());
+    hasher.finish()
+}
+
+fn key_name<'a>(group: &[&'a KafkaMetricRow], scope: Scope, hash: u64) -> Option<&'a str> {
+    group.iter().find_map(|row| {
+        let map = match scope {
+            Scope::Attribute => &row.attributes,
+            Scope::Resource => &row.resource_attributes,
+        };
+        map.keys()
+            .find(|key| key_hash(key) == hash)
+            .map(String::as_str)
+    })
+}
+
+/// Log lines carry at most this much of a sender's name.
+fn truncated(name: &str) -> &str {
+    const MAX_LOGGED_CHARS: usize = 200;
+    match name.char_indices().nth(MAX_LOGGED_CHARS) {
+        Some((end, _)) => &name[..end],
+        None => name,
+    }
 }
 
 fn value_hash(value: &str) -> u64 {
@@ -1015,19 +1060,21 @@ mod tests {
         (0..rows.len()).collect()
     }
 
-    fn rule_keys(detector: &LabelCardinality) -> Vec<(String, Scope, String)> {
-        let mut keys: Vec<_> = detector
+    fn rule_keys(detector: &LabelCardinality) -> HashSet<(u64, Scope, u64)> {
+        detector
             .rules
             .iter()
             .flat_map(|rules| {
                 rules
                     .iter()
-                    .map(|r| (r.family.clone(), r.scope, r.key.clone()))
+                    .map(|r| (r.metric_key, r.scope, r.key_hash))
                     .collect::<Vec<_>>()
             })
-            .collect();
-        keys.sort_by(|a, b| (&a.0, &a.2).cmp(&(&b.0, &b.2)));
-        keys
+            .collect()
+    }
+
+    fn rule_key(family: &str, scope: Scope, key: &str) -> (u64, Scope, u64) {
+        (metric_key(TOKEN, family), scope, key_hash(key))
     }
 
     #[test]
@@ -1039,18 +1086,10 @@ mod tests {
 
         assert_eq!(
             rule_keys(&detector),
-            vec![
-                (
-                    "latency".to_string(),
-                    Scope::Attribute,
-                    "user_id".to_string()
-                ),
-                (
-                    "requests_total".to_string(),
-                    Scope::Attribute,
-                    "user_id".to_string()
-                ),
-            ]
+            HashSet::from([
+                rule_key("latency", Scope::Attribute, "user_id"),
+                rule_key("requests_total", Scope::Attribute, "user_id"),
+            ])
         );
     }
 
@@ -1087,18 +1126,10 @@ mod tests {
 
         assert_eq!(
             rule_keys(&detector),
-            vec![
-                (
-                    "jobs_total".to_string(),
-                    Scope::Attribute,
-                    "instance".to_string()
-                ),
-                (
-                    "jobs_total".to_string(),
-                    Scope::Resource,
-                    "service.instance.id".to_string()
-                ),
-            ]
+            HashSet::from([
+                rule_key("jobs_total", Scope::Attribute, "instance"),
+                rule_key("jobs_total", Scope::Resource, "service.instance.id"),
+            ])
         );
     }
 
@@ -1266,11 +1297,7 @@ mod tests {
         detector.note_new_series(TOKEN, &rows, &all_rows_new(&rows), RW);
         detector.observe(TOKEN, &rows, RW);
 
-        assert!(rule_keys(&detector).contains(&(
-            "latency".to_string(),
-            Scope::Attribute,
-            "user_id".to_string()
-        )));
+        assert!(rule_keys(&detector).contains(&rule_key("latency", Scope::Attribute, "user_id")));
     }
 
     #[test]
@@ -1321,9 +1348,8 @@ mod tests {
     fn rule_for(family: &str, scope: Scope, key: &str) -> Rule {
         Rule {
             metric_key: metric_key(TOKEN, family),
-            family: family.to_string(),
             scope,
-            key: key.to_string(),
+            key_hash: key_hash(key),
             expires_at: START + 3600,
         }
     }
