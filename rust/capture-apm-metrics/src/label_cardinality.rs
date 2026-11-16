@@ -44,6 +44,9 @@ const COMPONENT_LABELS: [&str; 2] = ["le", "quantile"];
 /// the fingerprint hashes on its own, so a rule can not drop it.
 const SERVICE_NAME_RESOURCE: &str = "service.name";
 const MAX_PENDING_PUSHES: usize = 10_000;
+/// Rules from every pod land on every pod, so the rule map has its own cap.
+/// A rule is a few tens of bytes.
+const MAX_RULES: usize = 200_000;
 const HISTOGRAM_TYPE: &str = "histogram";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +221,7 @@ pub struct LabelCardinality {
     /// Exact candidate count. `DashMap::len` walks every shard.
     candidate_count: AtomicUsize,
     rules: DashMap<u64, Vec<Rule>>,
+    rule_count: AtomicUsize,
     protected: HashSet<(Scope, u64)>,
     tx: Option<mpsc::Sender<Rule>>,
 }
@@ -259,6 +263,7 @@ impl LabelCardinality {
             candidates: DashMap::new(),
             candidate_count: AtomicUsize::new(0),
             rules: DashMap::new(),
+            rule_count: AtomicUsize::new(0),
             tx,
         }
     }
@@ -354,14 +359,15 @@ impl LabelCardinality {
         true
     }
 
-    fn add_candidate(&self, metric_key: u64, token: &Arc<str>, window: i64) {
+    /// Returns whether the metric has a candidate afterwards.
+    fn add_candidate(&self, metric_key: u64, token: &Arc<str>, window: i64) -> bool {
         if self.candidates.contains_key(&metric_key) {
-            return;
+            return true;
         }
         if self.candidate_count.fetch_add(1, Ordering::AcqRel) >= self.settings.max_candidates {
             self.candidate_count.fetch_sub(1, Ordering::AcqRel);
             counter!("capture_metrics_label_cardinality_candidates_full").increment(1);
-            return;
+            return false;
         }
         let candidate = Candidate::new(Arc::clone(token), window);
         if let dashmap::Entry::Vacant(slot) = self.candidates.entry(metric_key) {
@@ -369,6 +375,7 @@ impl LabelCardinality {
         } else {
             self.candidate_count.fetch_sub(1, Ordering::AcqRel);
         }
+        true
     }
 
     /// Call it before [`Self::apply`], so the sketches see the labels that a
@@ -393,8 +400,9 @@ impl LabelCardinality {
             } else if self.rules.contains_key(&metric_key) {
                 // A rule hides the series growth from the gate, so the family
                 // would never pass stage 1 again. The rule keeps it tracked.
-                self.add_candidate(metric_key, &token_label, window);
-                groups.entry(metric_key).or_default().push(index);
+                if self.add_candidate(metric_key, &token_label, window) {
+                    groups.entry(metric_key).or_default().push(index);
+                }
             }
         }
 
@@ -551,13 +559,19 @@ impl LabelCardinality {
 
     fn merge_rule(&self, rule: Rule) {
         let mut rules = self.rules.entry(rule.metric_key).or_default();
-        match rules
+        if let Some(existing) = rules
             .iter_mut()
             .find(|r| r.scope == rule.scope && r.key_hash == rule.key_hash)
         {
-            Some(existing) => existing.expires_at = existing.expires_at.max(rule.expires_at),
-            None => rules.push(rule),
+            existing.expires_at = existing.expires_at.max(rule.expires_at);
+            return;
         }
+        if self.rule_count.fetch_add(1, Ordering::AcqRel) >= MAX_RULES {
+            self.rule_count.fetch_sub(1, Ordering::AcqRel);
+            counter!("capture_metrics_label_cardinality_rules_full").increment(1);
+            return;
+        }
+        rules.push(rule);
     }
 
     /// Call it after [`Self::observe`] and before the series label gate.
@@ -652,7 +666,10 @@ impl LabelCardinality {
     fn prune(&self, now: i64) {
         let window = self.window_index(now);
         self.rules.retain(|_, rules| {
+            let before = rules.len();
             rules.retain(|rule| rule.expires_at > now);
+            self.rule_count
+                .fetch_sub(before - rules.len(), Ordering::AcqRel);
             !rules.is_empty()
         });
         self.candidates.retain(|metric_key, candidate| {
@@ -1366,6 +1383,16 @@ mod tests {
         assert!(rows
             .iter()
             .all(|row| row.attributes.contains_key("user_id")));
+    }
+
+    #[test]
+    fn rules_stop_being_admitted_at_the_cap() {
+        let (detector, _rx, _) = detector(Mode::Enforce);
+        for i in 0..MAX_RULES + 10 {
+            detector.merge_rule(rule_for(&format!("m{i}"), Scope::Attribute, "user_id"));
+        }
+
+        assert_eq!(rule_keys(&detector).len(), MAX_RULES);
     }
 
     #[test]
