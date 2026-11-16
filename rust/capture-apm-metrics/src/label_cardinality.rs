@@ -1,28 +1,6 @@
 //! Finds label keys that make a metric explode into many series, and drops
-//! them before the series fingerprint is final.
-//!
-//! Detection has two stages so that its cost follows the metrics that grow,
-//! not every metric:
-//!
-//! 1. The series label gate reports each row that is new to its cache. Those
-//!    rows are one row per series per window, so their count per metric family
-//!    is a cheap count of new series. A family that passes
-//!    `candidate_min_new_series` in one window becomes a candidate.
-//! 2. For a candidate, every row feeds one HyperLogLog sketch of its original
-//!    series fingerprints and one sketch per label key of the label values.
-//!    A key is flagged when its distinct values pass `value_limit` and are at
-//!    least `min_share` of the distinct series. The share test points at the
-//!    key that causes the growth, not at every key of a large metric.
-//!
-//! A flagged key becomes a drop rule. Rules go to Redis so every pod applies
-//! the same rules. A rule expires after `rule_ttl` unless detection sees the
-//! key over half the limit again, so a rule ends on its own when the sender
-//! stops.
-//!
-//! In enforce mode the key is removed from the row and the fingerprint is
-//! computed again without it, so all series that differ only by that key
-//! become one series. Detection reads the rows before the drop, so it keeps
-//! measuring the original label while the rule is active.
+//! them before the series fingerprint is final. The README section "High
+//! cardinality label drop" describes the detection stages and the rules.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hasher;
@@ -62,21 +40,17 @@ const EVALUATE_INTERVAL_SECS: i64 = 10;
 /// fingerprint leaves them out as the builders do.
 const ORIGINAL_TIMESTAMP_ATTRIBUTES: [&str; 2] =
     [ORIGINAL_TIMESTAMP_ATTRIBUTE, "$originalTimestamp"];
-/// Enforce mode sets this attribute on every row that lost a label, so the
-/// metrics UI can show which series were combined. The value is the sorted,
-/// comma-joined list of the dropped keys. The fingerprint leaves it out, so a
-/// combined series keeps the fingerprint of a series that never had the key.
+/// The fingerprint leaves this marker out, so a combined series keeps the
+/// fingerprint of a series that never had the dropped key.
 pub const DROPPED_LABELS_ATTRIBUTE: &str = "posthog.dropped_labels";
 const HISTOGRAM_SUFFIXES: [&str; 3] = ["_bucket", "_count", "_sum"];
 const HISTOGRAM_TYPE: &str = "histogram";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// No detection and no drops.
     Off,
     /// Detect and share rules, but leave every row unchanged.
     Shadow,
-    /// Detect, share rules, and drop the flagged labels.
     Enforce,
 }
 
@@ -108,7 +82,6 @@ impl Mode {
 /// the series that a row without the label gets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FingerprintKind {
-    /// Every row uses the label fingerprint.
     Otlp,
     /// A native histogram row folded from classic components also hashes its
     /// bound set, see `histogram_assembly`.
@@ -242,15 +215,13 @@ pub struct LabelCardinality {
 }
 
 impl LabelCardinality {
-    /// Detector that shares rules through Redis. The receiver goes to
-    /// [`Self::spawn_redis_sync`].
+    /// The receiver goes to [`Self::spawn_redis_sync`].
     pub fn new(settings: Settings) -> (Arc<Self>, mpsc::Receiver<Rule>) {
         let (tx, rx) = mpsc::channel(WRITER_CHANNEL_CAPACITY);
         let detector = Self::build(settings, Some(tx), Arc::new(unix_now));
         (Arc::new(detector), rx)
     }
 
-    /// Detector whose rules stay on this pod. Used when `REDIS_URL` is unset.
     pub fn local_only(settings: Settings) -> Arc<Self> {
         Arc::new(Self::build(settings, None, Arc::new(unix_now)))
     }
@@ -275,9 +246,8 @@ impl LabelCardinality {
         now.div_euclid(self.settings.window.as_secs().max(1) as i64)
     }
 
-    /// Stage 1. Count the rows that the series label gate found new, per
-    /// metric family. `rows` are the rows the gate saw, `new_rows` the indices
-    /// it kept labelled.
+    /// `new_rows` are the indices of the rows the series label gate kept
+    /// labelled, which is one row per new series.
     pub fn note_new_series(&self, token: &str, rows: &[KafkaMetricRow], new_rows: &[usize]) {
         if self.settings.mode == Mode::Off || new_rows.is_empty() {
             return;
@@ -328,9 +298,8 @@ impl LabelCardinality {
         }
     }
 
-    /// Stage 2. Feed the sketches of each candidate from `rows`, then flag the
-    /// keys that pass the limits. Call it before [`Self::apply`], so the
-    /// sketches see the labels that a rule drops.
+    /// Call it before [`Self::apply`], so the sketches see the labels that a
+    /// rule drops.
     pub fn observe(&self, token: &str, rows: &[KafkaMetricRow]) {
         if self.settings.mode == Mode::Off || (self.candidates.is_empty() && self.rules.is_empty())
         {
@@ -411,9 +380,8 @@ impl LabelCardinality {
             || self.settings.protected_keys.contains(key)
     }
 
-    /// Create a rule for a key over the limits, and extend an active rule
-    /// while its key stays over half the limit. Half the limit gives the rule
-    /// hysteresis, so a key near the limit does not switch on and off.
+    /// An active rule is extended at half the limit, so a key near the limit
+    /// does not switch its rule on and off.
     fn evaluate(&self, metric_key: u64, candidate: &Candidate, now: i64) {
         let ttl = self.settings.rule_ttl.as_secs() as i64;
         let series = candidate.series.estimate();
@@ -480,8 +448,6 @@ impl LabelCardinality {
         }
     }
 
-    /// Add `rule`, or move an existing rule for the same key to the later
-    /// expiry.
     fn merge_rule(&self, rule: Rule) {
         let mut rules = self.rules.entry(rule.metric_key).or_default();
         match rules
@@ -493,12 +459,9 @@ impl LabelCardinality {
         }
     }
 
-    /// Drop the flagged labels from `rows`, mark each changed row with
-    /// [`DROPPED_LABELS_ATTRIBUTE`], and compute their fingerprints again
-    /// without the dropped labels. In shadow mode only count the rows that
-    /// would change. Call it after [`Self::observe`] and before the series
-    /// label gate. Returns the number of marked rows, so the caller can take
-    /// the marker off the billed bytes.
+    /// Call it after [`Self::observe`] and before the series label gate.
+    /// Returns the number of marked rows, so the caller can take the marker
+    /// off the billed bytes.
     pub fn apply(&self, token: &str, rows: &mut [KafkaMetricRow], kind: FingerprintKind) -> u64 {
         if self.settings.mode == Mode::Off || self.rules.is_empty() {
             return 0;
@@ -578,8 +541,6 @@ impl LabelCardinality {
             .unwrap_or_default()
     }
 
-    /// Remove expired rules, candidates from past windows with no rule, and
-    /// stale new-series counts.
     fn prune(&self, now: i64) {
         let window = self.window_index(now);
         self.rules.retain(|_, rules| {
@@ -616,7 +577,6 @@ impl LabelCardinality {
         });
     }
 
-    /// Read every rule in Redis that has not expired and merge it.
     pub async fn pull_rules(&self, client: &dyn Client) -> Result<usize, CustomRedisError> {
         let now = (self.clock)();
         let ttl = self.settings.rule_ttl.as_secs() as i64;
@@ -659,9 +619,8 @@ impl LabelCardinality {
         Ok(merged)
     }
 
-    /// Push the rules this pod creates or extends, and pull the rules of every
-    /// pod each `interval`. A Redis failure only means a pod finds a rule later
-    /// through its own detection.
+    /// A Redis failure only means a pod finds a rule later through its own
+    /// detection.
     pub fn spawn_redis_sync(
         self: &Arc<Self>,
         client: Arc<dyn Client>,
@@ -789,8 +748,7 @@ fn bucket_keys(from: i64, to: i64) -> Vec<String> {
         .collect()
 }
 
-/// One `ZADD` per expiry bucket, scored by expiry so a pull can skip expired
-/// rules, plus one `EXPIRE` per bucket.
+/// Members are scored by expiry so a pull can skip expired rules.
 fn rule_commands(rules: &[Rule], ttl_secs: u64) -> Vec<PipelineCommand> {
     let mut by_bucket: HashMap<String, Vec<(i64, String)>> = HashMap::new();
     for rule in rules {
@@ -868,9 +826,6 @@ mod tests {
         }
     }
 
-    /// A remote-write classic histogram with one series per `user_id`, plus
-    /// `route` with few values. `posthog.original_timestamp` is not here: it is
-    /// added per sample by the builder only for out-of-window timestamps.
     fn histogram_series(users: usize, with_user: bool) -> Vec<TimeSeries> {
         let timestamp = Utc::now().timestamp_millis();
         let mut series = Vec::new();

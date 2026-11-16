@@ -95,7 +95,6 @@ pub struct Config {
     #[envconfig(from = "METRICS_LABEL_CARDINALITY_RULE_TTL_SECS", default = "7200")]
     pub metrics_label_cardinality_rule_ttl_secs: u64,
 
-    /// Comma-separated label keys that are never dropped.
     #[envconfig(
         from = "METRICS_LABEL_CARDINALITY_PROTECTED_KEYS",
         default = "le,quantile"
