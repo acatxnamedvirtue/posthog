@@ -1,5 +1,7 @@
 import type { PostHog } from 'posthog-js/dist/module'
 
+import type { ToolbarProject } from './toolbarProject'
+
 // App modules import this file, so it must not import any toolbar module or the toolbar ships on every app page.
 
 export interface ToolbarRuntime {
@@ -7,6 +9,7 @@ export interface ToolbarRuntime {
     posthog: () => PostHog | null
     isAuthenticated: () => boolean
     authenticate: () => void
+    project: () => ToolbarProject | null
 }
 
 let mountedRuntime: ToolbarRuntime | null = null

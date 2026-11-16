@@ -86,15 +86,21 @@ describe('toolbar toolbarConfigLogic', () => {
         expectLogic(logic).toMatchValues({ isAuthenticated: false })
     })
 
-    it('is authenticated with accessToken', () => {
+    it.each([
+        ['with the project it is scoped to', { teamId: 2, projectId: 1 }, true],
+        ['without a project, as an older toolbar stored its params', {}, false],
+    ])('is authenticated with an accessToken %s: %s', (_label, project, expected) => {
+        localStorage.setItem(OAUTH_LOCALSTORAGE_KEY, JSON.stringify({ accessToken: 'pha_oauth_token' }))
         const logic = toolbarConfigLogic.build({
             apiURL: 'http://localhost',
             accessToken: 'pha_oauth_token',
             refreshToken: 'phr_refresh',
             clientId: 'client-id',
+            ...project,
         })
         logic.mount()
-        expectLogic(logic).toMatchValues({ isAuthenticated: true })
+        expectLogic(logic).toMatchValues({ isAuthenticated: expected })
+        expect(localStorage.getItem(OAUTH_LOCALSTORAGE_KEY) !== null).toBe(expected)
     })
 
     it('setOAuthTokens updates tokens', () => {
@@ -102,9 +108,10 @@ describe('toolbar toolbarConfigLogic', () => {
         logic.mount()
 
         expectLogic(logic, () => {
-            logic.actions.setOAuthTokens('pha_new', 'phr_new', 'client-123')
+            logic.actions.setOAuthTokens('pha_new', 'phr_new', 'client-123', { teamId: 2, projectId: 1 })
         }).toMatchValues({
             accessToken: 'pha_new',
+            project: { teamId: 2, projectId: 1 },
             refreshToken: 'phr_new',
             clientId: 'client-123',
             isAuthenticated: true,
@@ -115,6 +122,8 @@ describe('toolbar toolbarConfigLogic', () => {
         const logic = toolbarConfigLogic.build({
             apiURL: 'http://localhost',
             accessToken: 'access',
+            teamId: 2,
+            projectId: 1,
             refreshToken: 'refresh',
             clientId: 'client',
         })
@@ -134,6 +143,8 @@ describe('toolbar toolbarConfigLogic', () => {
         const logic = toolbarConfigLogic.build({
             apiURL: 'http://localhost',
             accessToken: 'access',
+            teamId: 2,
+            projectId: 1,
             refreshToken: 'refresh',
             clientId: 'client',
         })
@@ -345,6 +356,8 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({
                 uiHost: 'https://selfhosted.example.com',
                 accessToken: 'pha_existing',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'phr_existing',
                 clientId: 'client',
             } as any)
@@ -367,10 +380,12 @@ describe('toolbar toolbarConfigLogic', () => {
         })
 
         it('runs the HEAD check when a pending code exchange is present, even if already authenticated', () => {
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz')
+            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1')
             const logic = toolbarConfigLogic.build({
                 uiHost: 'https://selfhosted.example.com',
                 accessToken: 'pha_existing',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'phr_existing',
                 clientId: 'client',
             } as any)
@@ -410,6 +425,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                     uiHost: 'https://us.posthog.com',
@@ -420,6 +437,7 @@ describe('toolbar toolbarConfigLogic', () => {
 
             expectLogic(logic).toMatchValues({
                 accessToken: 'stored-access',
+                project: { teamId: 2, projectId: 1 },
                 refreshToken: 'stored-refresh',
                 clientId: 'stored-client',
                 isAuthenticated: true,
@@ -431,6 +449,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                     uiHost: 'http://localhost',
@@ -441,6 +461,7 @@ describe('toolbar toolbarConfigLogic', () => {
 
             expectLogic(logic).toMatchValues({
                 accessToken: 'stored-access',
+                project: { teamId: 2, projectId: 1 },
                 isAuthenticated: true,
             })
         })
@@ -450,6 +471,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     clientId: 'stored-client',
                     uiHost: 'http://localhost',
                 })
@@ -459,6 +482,7 @@ describe('toolbar toolbarConfigLogic', () => {
 
             expectLogic(logic).toMatchValues({
                 accessToken: 'stored-access',
+                project: { teamId: 2, projectId: 1 },
                 refreshToken: null,
                 isAuthenticated: true,
             })
@@ -469,6 +493,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                     uiHost: 'https://us.posthog.com',
@@ -490,6 +516,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'legacy-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'legacy-refresh',
                     clientId: 'legacy-client',
                 })
@@ -499,6 +527,7 @@ describe('toolbar toolbarConfigLogic', () => {
 
             expectLogic(logic).toMatchValues({
                 accessToken: 'legacy-access',
+                project: { teamId: 2, projectId: 1 },
                 isAuthenticated: true,
             })
         })
@@ -511,6 +540,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'legacy-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'legacy-refresh',
                     clientId: 'legacy-client',
                 })
@@ -533,6 +564,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                     uiHost: 'https://us.posthog.com',
@@ -553,6 +586,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                     // Old toolbar wrote trailing slash + mixed case; the selector and
@@ -564,15 +599,32 @@ describe('toolbar toolbarConfigLogic', () => {
             logic.mount()
             expectLogic(logic).toMatchValues({
                 accessToken: 'stored-access',
+                project: { teamId: 2, projectId: 1 },
                 isAuthenticated: true,
             })
         })
 
-        it('discards tokens whose stored fields are not strings', () => {
-            localStorage.setItem(
-                OAUTH_LOCALSTORAGE_KEY,
-                JSON.stringify({ accessToken: 123, refreshToken: {}, clientId: null, uiHost: 'https://us.posthog.com' })
-            )
+        it.each([
+            [
+                'fields that are not strings',
+                { accessToken: 123, refreshToken: {}, clientId: null, uiHost: 'https://us.posthog.com' },
+            ],
+            [
+                'no team or project, as stored before the toolbar pinned its project',
+                { accessToken: 'stored-access', clientId: 'stored-client', uiHost: 'https://us.posthog.com' },
+            ],
+            [
+                'a project id that is not a number',
+                {
+                    accessToken: 'stored-access',
+                    clientId: 'stored-client',
+                    teamId: 2,
+                    projectId: '@current',
+                    uiHost: 'https://us.posthog.com',
+                },
+            ],
+        ])('discards stored tokens with %s', (_label, stored) => {
+            localStorage.setItem(OAUTH_LOCALSTORAGE_KEY, JSON.stringify(stored))
             const logic = toolbarConfigLogic.build({ uiHost: 'https://us.posthog.com' } as any)
             logic.mount()
             expectLogic(logic).toMatchValues({ accessToken: null, isAuthenticated: false })
@@ -594,6 +646,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                 })
@@ -601,6 +655,8 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({
                 apiURL: 'http://localhost',
                 accessToken: 'existing-access',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'existing-refresh',
                 clientId: 'existing-client',
             })
@@ -622,6 +678,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                     uiHost: 'http://localhost',
@@ -636,6 +694,7 @@ describe('toolbar toolbarConfigLogic', () => {
 
             expectLogic(logic).toMatchValues({
                 accessToken: 'stored-access',
+                project: { teamId: 2, projectId: 1 },
                 refreshToken: 'stored-refresh',
                 clientId: 'stored-client',
                 isAuthenticated: true,
@@ -647,6 +706,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'old-stored',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'old-stored-refresh',
                     clientId: 'old-stored-client',
                 })
@@ -654,6 +715,8 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({
                 apiURL: 'http://localhost',
                 accessToken: 'props-access',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'props-refresh',
                 clientId: 'props-client',
             })
@@ -668,22 +731,31 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'old-stored',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'old-refresh',
                     clientId: 'old-client',
                 })
             )
             localStorage.setItem(PKCE_STORAGE_KEY, JSON.stringify({ verifier: 'test-verifier', ts: Date.now() }))
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:fresh,client_id:new-client')
+            window.history.pushState(
+                {},
+                '',
+                '/#__posthog_toolbar=code:fresh,client_id:new-client,team_id:2,project_id:1'
+            )
             mockTokenExchangeSuccess()
 
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
             logic.mount()
 
-            await expectLogic(logic).delay(0).toMatchValues({
-                accessToken: 'new-access',
-                refreshToken: 'new-refresh',
-                isAuthenticated: true,
-            })
+            await expectLogic(logic)
+                .delay(0)
+                .toMatchValues({
+                    accessToken: 'new-access',
+                    project: { teamId: 2, projectId: 1 },
+                    refreshToken: 'new-refresh',
+                    isAuthenticated: true,
+                })
         })
 
         it('falls back to stored tokens when code exchange fails due to expired PKCE', async () => {
@@ -692,6 +764,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                     uiHost: 'http://localhost',
@@ -702,18 +776,41 @@ describe('toolbar toolbarConfigLogic', () => {
                 PKCE_STORAGE_KEY,
                 JSON.stringify({ verifier: 'expired-verifier', ts: Date.now() - 11 * 60 * 1000 })
             )
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:stale,client_id:some-client')
+            window.history.pushState(
+                {},
+                '',
+                '/#__posthog_toolbar=code:stale,client_id:some-client,team_id:2,project_id:1'
+            )
             mockTokenExchangeSuccess()
 
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
             logic.mount()
 
-            await expectLogic(logic).delay(0).toMatchValues({
-                accessToken: 'stored-access',
-                refreshToken: 'stored-refresh',
-                clientId: 'stored-client',
-                isAuthenticated: true,
-            })
+            await expectLogic(logic)
+                .delay(0)
+                .toMatchValues({
+                    accessToken: 'stored-access',
+                    project: { teamId: 2, projectId: 1 },
+                    refreshToken: 'stored-refresh',
+                    clientId: 'stored-client',
+                    isAuthenticated: true,
+                })
+            warnSpy.mockRestore()
+        })
+
+        it('signs out a token from toolbar params without a project when a stale code fails to exchange', async () => {
+            const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+            localStorage.removeItem(PKCE_STORAGE_KEY)
+            window.history.pushState(
+                {},
+                '',
+                '/#__posthog_toolbar=code:stale,client_id:some-client,team_id:2,project_id:1'
+            )
+
+            const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost', accessToken: 'legacy-access' })
+            logic.mount()
+
+            await expectLogic(logic).delay(0).toMatchValues({ accessToken: null, isAuthenticated: false })
             warnSpy.mockRestore()
         })
 
@@ -723,21 +820,30 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                     uiHost: 'http://localhost',
                 })
             )
             localStorage.removeItem(PKCE_STORAGE_KEY)
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:stale,client_id:some-client')
+            window.history.pushState(
+                {},
+                '',
+                '/#__posthog_toolbar=code:stale,client_id:some-client,team_id:2,project_id:1'
+            )
 
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
             logic.mount()
 
-            await expectLogic(logic).delay(0).toMatchValues({
-                accessToken: 'stored-access',
-                isAuthenticated: true,
-            })
+            await expectLogic(logic)
+                .delay(0)
+                .toMatchValues({
+                    accessToken: 'stored-access',
+                    project: { teamId: 2, projectId: 1 },
+                    isAuthenticated: true,
+                })
             warnSpy.mockRestore()
         })
 
@@ -747,13 +853,19 @@ describe('toolbar toolbarConfigLogic', () => {
                 OAUTH_LOCALSTORAGE_KEY,
                 JSON.stringify({
                     accessToken: 'stored-access',
+                    teamId: 2,
+                    projectId: 1,
                     refreshToken: 'stored-refresh',
                     clientId: 'stored-client',
                     uiHost: 'http://localhost',
                 })
             )
             localStorage.removeItem(PKCE_STORAGE_KEY)
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:stale,client_id:some-client')
+            window.history.pushState(
+                {},
+                '',
+                '/#__posthog_toolbar=code:stale,client_id:some-client,team_id:2,project_id:1'
+            )
 
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
             logic.mount()
@@ -772,7 +884,11 @@ describe('toolbar toolbarConfigLogic', () => {
                 PKCE_STORAGE_KEY,
                 JSON.stringify({ verifier: 'expired-verifier', ts: Date.now() - 11 * 60 * 1000 })
             )
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:stale,client_id:some-client')
+            window.history.pushState(
+                {},
+                '',
+                '/#__posthog_toolbar=code:stale,client_id:some-client,team_id:2,project_id:1'
+            )
 
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
             logic.mount()
@@ -788,11 +904,13 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
             logic.mount()
 
-            logic.actions.setOAuthTokens('new-access', 'new-refresh', 'new-client')
+            logic.actions.setOAuthTokens('new-access', 'new-refresh', 'new-client', { teamId: 2, projectId: 1 })
 
             const stored = JSON.parse(localStorage.getItem(OAUTH_LOCALSTORAGE_KEY) || '{}')
             expect(stored).toEqual({
                 accessToken: 'new-access',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'new-refresh',
                 clientId: 'new-client',
                 uiHost: 'http://localhost',
@@ -802,6 +920,8 @@ describe('toolbar toolbarConfigLogic', () => {
         it('leaves the page storage alone when the browser extension mounts it', () => {
             const floatingToolbarSession = JSON.stringify({
                 accessToken: 'page-access',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'page-refresh',
                 clientId: 'page-client',
                 uiHost: 'http://localhost',
@@ -811,12 +931,17 @@ describe('toolbar toolbarConfigLogic', () => {
                 source: 'extension',
                 uiHost: 'http://localhost',
                 accessToken: 'extension-access',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'extension-refresh',
                 clientId: 'extension-client',
             })
             logic.mount()
 
-            logic.actions.setOAuthTokens('rotated-access', 'rotated-refresh', 'extension-client')
+            logic.actions.setOAuthTokens('rotated-access', 'rotated-refresh', 'extension-client', {
+                teamId: 2,
+                projectId: 1,
+            })
             expect(logic.values.accessToken).toEqual('rotated-access')
             logic.actions.tokenExpired()
             logic.actions.logout()
@@ -833,6 +958,8 @@ describe('toolbar toolbarConfigLogic', () => {
                     source: 'extension',
                     uiHost: 'https://us.posthog.com',
                     accessToken: 'extension-access',
+                    teamId: 2,
+                    projectId: 1,
                     clientId: 'extension-client',
                 })
                 logic.mount()
@@ -853,7 +980,7 @@ describe('toolbar toolbarConfigLogic', () => {
             logic.mount()
 
             // Authenticate first so tokens are persisted
-            logic.actions.setOAuthTokens('access', 'refresh', 'client')
+            logic.actions.setOAuthTokens('access', 'refresh', 'client', { teamId: 2, projectId: 1 })
             expect(localStorage.getItem(OAUTH_LOCALSTORAGE_KEY)).not.toBeNull()
 
             logic.actions.logout()
@@ -867,7 +994,7 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
             logic.mount()
 
-            logic.actions.setOAuthTokens('access', 'refresh', 'client')
+            logic.actions.setOAuthTokens('access', 'refresh', 'client', { teamId: 2, projectId: 1 })
             expect(localStorage.getItem(OAUTH_LOCALSTORAGE_KEY)).not.toBeNull()
 
             logic.actions.tokenExpired()
@@ -879,7 +1006,10 @@ describe('toolbar toolbarConfigLogic', () => {
             // First mount: set tokens
             const logic1 = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
             logic1.mount()
-            logic1.actions.setOAuthTokens('persisted-access', 'persisted-refresh', 'persisted-client')
+            logic1.actions.setOAuthTokens('persisted-access', 'persisted-refresh', 'persisted-client', {
+                teamId: 2,
+                projectId: 1,
+            })
             logic1.unmount()
             expect(getToolbarRuntime()).toBeNull()
 
@@ -889,6 +1019,7 @@ describe('toolbar toolbarConfigLogic', () => {
 
             expectLogic(logic2).toMatchValues({
                 accessToken: 'persisted-access',
+                project: { teamId: 2, projectId: 1 },
                 refreshToken: 'persisted-refresh',
                 clientId: 'persisted-client',
                 isAuthenticated: true,
@@ -926,6 +1057,8 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({
                 apiURL: 'http://localhost',
                 accessToken: 'old-access',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'old-refresh',
                 clientId: 'client-id',
             })
@@ -956,7 +1089,7 @@ describe('toolbar toolbarConfigLogic', () => {
                 })
             })
 
-            const response = await toolbarFetch('/api/projects/@current/actions/')
+            const response = await toolbarFetch('/api/projects/1/actions/')
 
             expect(response.status).toBe(200)
             expect(logic.values.accessToken).toBe('new-access')
@@ -967,6 +1100,8 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({
                 apiURL: 'http://localhost',
                 accessToken: 'old-access',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'old-refresh',
                 clientId: 'client-id',
             })
@@ -978,7 +1113,7 @@ describe('toolbar toolbarConfigLogic', () => {
                 return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) })
             })
 
-            await toolbarFetch('/api/projects/@current/actions/')
+            await toolbarFetch('/api/projects/1/actions/')
 
             expect(logic.values.accessToken).toBeNull()
             expect(logic.values.isAuthenticated).toBe(false)
@@ -988,6 +1123,8 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({
                 apiURL: 'http://localhost',
                 accessToken: 'imp-access',
+                teamId: 2,
+                projectId: 1,
                 clientId: 'client-id',
             })
             logic.mount()
@@ -1000,7 +1137,7 @@ describe('toolbar toolbarConfigLogic', () => {
                 return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) })
             })
 
-            await toolbarFetch('/api/projects/@current/actions/')
+            await toolbarFetch('/api/projects/1/actions/')
 
             expect(refreshAttempted).toBe(false)
             expect(logic.values.accessToken).toBeNull()
@@ -1011,6 +1148,8 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({
                 apiURL: 'http://localhost',
                 accessToken: 'access-token',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'refresh-token',
                 clientId: 'client-id',
             })
@@ -1024,7 +1163,7 @@ describe('toolbar toolbarConfigLogic', () => {
                 })
             )
 
-            const response = await toolbarFetch('/api/projects/@current/actions/')
+            const response = await toolbarFetch('/api/projects/1/actions/')
 
             expect(response.status).toBe(200)
             // Only one fetch call (no refresh)
@@ -1036,6 +1175,8 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({
                 apiURL: 'http://localhost',
                 accessToken: 'access-token',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'refresh-token',
                 clientId: 'client-id',
             })
@@ -1044,7 +1185,7 @@ describe('toolbar toolbarConfigLogic', () => {
             // used to crash the OAuth chain with "Cannot read properties of undefined (reading 'status')".
             ;(global.fetch as jest.Mock).mockImplementation(() => Promise.resolve(undefined))
 
-            const response = await toolbarFetch('/api/projects/@current/actions/')
+            const response = await toolbarFetch('/api/projects/1/actions/')
 
             // Normalized into a synthetic failed response so callers can degrade gracefully.
             expect(response).toBeInstanceOf(Response)
@@ -1105,7 +1246,7 @@ describe('toolbar toolbarConfigLogic', () => {
         })
 
         it('uses uiHost-derived URLs for token exchange', async () => {
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz')
+            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1')
             mockTokenExchangeSuccess()
 
             const logic = toolbarConfigLogic.build({
@@ -1113,10 +1254,13 @@ describe('toolbar toolbarConfigLogic', () => {
             } as any)
             logic.mount()
 
-            await expectLogic(logic).delay(0).toMatchValues({
-                accessToken: 'new-access',
-                isAuthenticated: true,
-            })
+            await expectLogic(logic)
+                .delay(0)
+                .toMatchValues({
+                    accessToken: 'new-access',
+                    project: { teamId: 2, projectId: 1 },
+                    isAuthenticated: true,
+                })
 
             // Trusted Cloud hosts skip the HEAD reachability check, so the first
             // fetch is the token exchange.
@@ -1126,8 +1270,21 @@ describe('toolbar toolbarConfigLogic', () => {
             expect(body.get('redirect_uri')).toBe('https://us.posthog.com/toolbar_oauth/callback')
         })
 
-        it('authenticates when the token response has no refresh token (impersonation)', async () => {
+        it('does not exchange a code when the callback names no project', async () => {
             window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz')
+            mockTokenExchangeSuccess()
+
+            const logic = toolbarConfigLogic.build({
+                posthog: { config: { ui_host: 'https://us.posthog.com' } } as any,
+            } as any)
+            logic.mount()
+
+            await expectLogic(logic).delay(0).toMatchValues({ accessToken: null, isAuthenticated: false })
+            expect(global.fetch).not.toHaveBeenCalled()
+        })
+
+        it('authenticates when the token response has no refresh token (impersonation)', async () => {
+            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1')
             ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
                 if (typeof url === 'string' && url.endsWith('/toolbar_oauth/check')) {
                     return Promise.resolve({ ok: true, status: 200 })
@@ -1145,15 +1302,18 @@ describe('toolbar toolbarConfigLogic', () => {
             } as any)
             logic.mount()
 
-            await expectLogic(logic).delay(0).toMatchValues({
-                accessToken: 'imp-access',
-                refreshToken: null,
-                isAuthenticated: true,
-            })
+            await expectLogic(logic)
+                .delay(0)
+                .toMatchValues({
+                    accessToken: 'imp-access',
+                    project: { teamId: 2, projectId: 1 },
+                    refreshToken: null,
+                    isAuthenticated: true,
+                })
         })
 
         it('does not trigger temporaryToken migration during code exchange', async () => {
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz')
+            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1')
             mockTokenExchangeSuccess()
 
             const logic = toolbarConfigLogic.build({
@@ -1166,7 +1326,7 @@ describe('toolbar toolbarConfigLogic', () => {
         })
 
         it('cleans up localStorage PKCE key after exchange', async () => {
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz')
+            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1')
             mockTokenExchangeSuccess()
 
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
@@ -1183,7 +1343,7 @@ describe('toolbar toolbarConfigLogic', () => {
             const expiredPayload = JSON.stringify({ verifier: 'test-verifier', ts: Date.now() - 11 * 60 * 1000 })
             localStorage.setItem(PKCE_STORAGE_KEY, expiredPayload)
 
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz')
+            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1')
             mockTokenExchangeSuccess()
 
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
@@ -1201,7 +1361,7 @@ describe('toolbar toolbarConfigLogic', () => {
             const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
             localStorage.setItem(PKCE_STORAGE_KEY, 'not-valid-json{{{')
 
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz')
+            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1')
             mockTokenExchangeSuccess()
 
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
@@ -1219,7 +1379,7 @@ describe('toolbar toolbarConfigLogic', () => {
             const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
             localStorage.removeItem(PKCE_STORAGE_KEY)
 
-            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz')
+            window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1')
             mockTokenExchangeSuccess()
 
             const logic = toolbarConfigLogic.build({ apiURL: 'http://localhost' })
@@ -1243,7 +1403,7 @@ describe('toolbar toolbarConfigLogic', () => {
             window.history.pushState({}, '', '/#__posthog_toolbar=code:abc,client_id:xyz')
             const replaceStateSpy = jest.spyOn(window.history, 'replaceState')
             const result = readToolbarAuthHash()
-            expect(result).toEqual({ code: 'abc', clientId: 'xyz' })
+            expect(result).toEqual({ code: 'abc', clientId: 'xyz', project: null })
             expect(replaceStateSpy).not.toHaveBeenCalled()
             replaceStateSpy.mockRestore()
         })
@@ -1263,34 +1423,59 @@ describe('toolbar toolbarConfigLogic', () => {
         })
 
         it.each([
-            ['standard params', '/#__posthog_toolbar=code:abc,client_id:xyz', { code: 'abc', clientId: 'xyz' }],
+            [
+                'standard params',
+                '/#__posthog_toolbar=code:abc,client_id:xyz',
+                { code: 'abc', clientId: 'xyz', project: null },
+            ],
             [
                 'base64url-safe code with dashes and underscores',
                 '/#__posthog_toolbar=code:a2gGQw68uN8fzaKelhTZZY-cuSDnP7H_x,client_id:QUKsGDyHrQqrbBwdMYaL2rmp2rPDfHJICOM5EZzY',
                 {
                     code: 'a2gGQw68uN8fzaKelhTZZY-cuSDnP7H_x',
                     clientId: 'QUKsGDyHrQqrbBwdMYaL2rmp2rPDfHJICOM5EZzY',
+                    project: null,
                 },
+            ],
+            [
+                'team and project ids from the callback',
+                '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1',
+                { code: 'abc', clientId: 'xyz', project: { teamId: 2, projectId: 1 } },
+            ],
+            [
+                'team and project ids followed by another hash param',
+                '/#/login?__posthog_toolbar=code:abc,client_id:xyz,team_id:2,project_id:1&foo=bar',
+                { code: 'abc', clientId: 'xyz', project: { teamId: 2, projectId: 1 } },
+            ],
+            [
+                'percent-encoded team and project ids',
+                '/#__posthog_toolbar=code%3Aabc%2Cclient_id%3Axyz%2Cteam_id%3A2%2Cproject_id%3A1',
+                { code: 'abc', clientId: 'xyz', project: { teamId: 2, projectId: 1 } },
+            ],
+            [
+                'a non-numeric team id',
+                '/#__posthog_toolbar=code:abc,client_id:xyz,team_id:@current,project_id:1',
+                { code: 'abc', clientId: 'xyz', project: null },
             ],
             [
                 'preceded by hash-based SPA route',
                 '/#/login&__posthog_toolbar=code:abc,client_id:xyz',
-                { code: 'abc', clientId: 'xyz' },
+                { code: 'abc', clientId: 'xyz', project: null },
             ],
             [
                 'preceded by multiple hash params',
                 '/#section1&tab=2&__posthog_toolbar=code:abc,client_id:xyz',
-                { code: 'abc', clientId: 'xyz' },
+                { code: 'abc', clientId: 'xyz', project: null },
             ],
             [
                 'coexists with __posthog= param',
                 '/#__posthog=%7B%7D&__posthog_toolbar=code:abc,client_id:xyz',
-                { code: 'abc', clientId: 'xyz' },
+                { code: 'abc', clientId: 'xyz', project: null },
             ],
             [
                 'percent-encoded delimiters',
                 '/#__posthog_toolbar=code%3Aabc%2Cclient_id%3Axyz',
-                { code: 'abc', clientId: 'xyz' },
+                { code: 'abc', clientId: 'xyz', project: null },
             ],
         ])('extracts params for: %s', (_label, url, expected) => {
             window.history.pushState({}, '', url)
@@ -1542,6 +1727,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 uiHost: 'https://us.posthog.com',
                 apiURL: 'https://evil.example.com',
                 accessToken: 'pha_secret',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'phr_secret',
                 clientId: 'client',
             } as any)
@@ -1566,7 +1753,7 @@ describe('toolbar toolbarConfigLogic', () => {
                 (c) => typeof c[0] === 'string' && c[0].includes('/uploaded_media/')
             )
             expect(uploadCalls).toHaveLength(1)
-            expect(uploadCalls[0][0]).toBe('https://us.posthog.com/api/projects/@current/uploaded_media/')
+            expect(uploadCalls[0][0]).toBe('https://us.posthog.com/api/projects/1/uploaded_media/')
 
             // Strong regression guard: no fetch (auth or otherwise) may target attacker host.
             const callsToAttacker = (global.fetch as jest.Mock).mock.calls.filter(
@@ -1613,6 +1800,8 @@ describe('toolbar toolbarConfigLogic', () => {
             const logic = toolbarConfigLogic.build({
                 uiHost: 'https://us.posthog.com',
                 accessToken: 'pha_real',
+                teamId: 2,
+                projectId: 1,
             } as any)
             logic.mount()
             expectLogic(logic).toMatchValues({ accessToken: 'pha_real', isAuthenticated: true })
@@ -1652,6 +1841,8 @@ describe('toolbar toolbarConfigLogic', () => {
                 uiHost: 'https://us.posthog.com',
                 apiURL: 'https://us.posthog.com',
                 accessToken: 'pha_token',
+                teamId: 2,
+                projectId: 1,
                 refreshToken: 'phr_token',
                 clientId: 'client',
             } as any)

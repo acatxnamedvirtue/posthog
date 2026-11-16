@@ -26,6 +26,7 @@ import { lemonToast } from 'lib/lemon-ui/LemonToast/LemonToast'
 import { dateFilterToText } from 'lib/utils/dateFilters'
 import { getAppContext } from 'lib/utils/getAppContext'
 
+import { toolbarScopedPath } from '~/toolbar/shared/toolbarProject'
 import { ToolbarRequestError } from '~/toolbar/shared/toolbarRequestError'
 import { getToolbarRuntime } from '~/toolbar/shared/toolbarRuntime'
 import { HeatmapElement, HeatmapResponseType } from '~/toolbar/shared/types'
@@ -140,6 +141,12 @@ async function fetchHeatmapData(
 }
 
 export function heatmapApiPath(context: HeatmapDataLogicProps['context'], endpoint: '' | 'events/'): string {
+    if (context === 'toolbar') {
+        // The toolbar's token is scoped to one team, so pin that team. Without a session there is no team, and
+        // toolbarFetch refuses the request before it is sent.
+        const project = getToolbarRuntime()?.project()
+        return project ? toolbarScopedPath(project, 'team', `heatmaps/${endpoint}`) : `/api/heatmap/${endpoint}`
+    }
     if (context === 'in-app') {
         // The unscoped /api/heatmap/ route resolves the team from the user's *global* current
         // project, which any other tab can change, so pin the team this page was loaded for
