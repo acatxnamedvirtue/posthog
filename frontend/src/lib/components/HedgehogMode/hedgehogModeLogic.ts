@@ -169,7 +169,6 @@ export const hedgehogModeLogic = kea<hedgehogModeLogicType>([
                         // The config is cosmetic - on any request failure (network, auth,
                         // non-JSON body) fall back to defaults rather than raising an error.
                         try {
-                            // Imported here so the app never ships the toolbar's request code.
                             const { toolbarFetch } = await import('~/toolbar/shared/toolbarFetch')
                             const response = await toolbarFetch(endpoint, 'GET')
                             if (!response.ok) {
