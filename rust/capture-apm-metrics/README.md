@@ -22,14 +22,14 @@ This binary is the metrics half of [`capture-logs`](../capture-logs/README.md). 
 | METRICS_SERIES_REDIS_PULL_INTERVAL_SECS | 60 | How often the local cache pulls new series from Redis |
 | METRICS_SERIES_CACHE_MAX_ENTRIES | 20000000 | Most series one pod remembers, across all tokens |
 | METRICS_SERIES_CACHE_MAX_ENTRIES_PER_TOKEN | 2000000 | Most series one pod remembers for one token |
-| METRICS_LABEL_CARDINALITY_MODE | shadow | `off`, `shadow` or `enforce` (see below). Shadow finds and shares drop rules but changes no row |
-| METRICS_LABEL_CARDINALITY_VALUE_LIMIT | 10000 | Distinct values one label key of one metric may have in a window before it is dropped |
-| METRICS_LABEL_CARDINALITY_MIN_SHARE | 0.5 | Smallest ratio of a key's distinct values to the metric's distinct series for the key to be dropped |
-| METRICS_LABEL_CARDINALITY_CANDIDATE_MIN_NEW_SERIES | 500 | New series one pod must see for a metric in a window before it measures that metric's labels |
-| METRICS_LABEL_CARDINALITY_MAX_CANDIDATES | 2000 | Most metrics one pod measures at once |
+| METRICS_LABEL_CARDINALITY_MODE | shadow | `off`, `shadow` or `enforce`. Shadow finds rules but changes no row |
+| METRICS_LABEL_CARDINALITY_VALUE_LIMIT | 10000 | Distinct values per key per window before the key is dropped |
+| METRICS_LABEL_CARDINALITY_MIN_SHARE | 0.5 | Smallest ratio of a key's values to the metric's series for a drop |
+| METRICS_LABEL_CARDINALITY_CANDIDATE_MIN_NEW_SERIES | 500 | New series per window before a metric's labels are measured |
+| METRICS_LABEL_CARDINALITY_MAX_CANDIDATES | 2000 | Most metrics one pod measures |
 | METRICS_LABEL_CARDINALITY_MAX_KEYS_PER_METRIC | 32 | Most label keys one pod measures for one metric |
-| METRICS_LABEL_CARDINALITY_RULE_TTL_SECS | 7200 | How long a drop rule lasts after detection last saw its key over half the limit |
-| METRICS_LABEL_CARDINALITY_PROTECTED_KEYS | le,quantile | Comma-separated label keys that are never dropped |
+| METRICS_LABEL_CARDINALITY_RULE_TTL_SECS | 7200 | Rule lifetime after its key was last over half the limit |
+| METRICS_LABEL_CARDINALITY_PROTECTED_KEYS | le,quantile | Label keys that are never dropped |
 
 ### Metric series label gate
 
@@ -45,17 +45,13 @@ The cache is bounded. When the global or the per-token cap is full, a new series
 
 ### High cardinality label drop
 
-The service finds label keys that make one metric grow into many series, and removes them before the fingerprint is final. All series that differ only by a dropped key become one series. Detection is per project token and per metric family; the `_bucket`, `_count` and `_sum` names of a classic histogram are one family, so a rule drops the key from all of them.
+The service finds a label key that splits one metric into many series, removes it, and computes the fingerprint without it, so those series become one. The `_bucket`, `_count` and `_sum` series of a classic histogram share one rule.
 
-Detection has two stages. First, the series label gate reports the rows that are new to its cache, which is one row per series per window, and the service counts them per metric family. A family that passes `METRICS_LABEL_CARDINALITY_CANDIDATE_MIN_NEW_SERIES` in one window is measured: every later row of it goes into a HyperLogLog sketch of its series fingerprints and one sketch per label key (attributes and resource attributes separately). A key is flagged when its distinct values pass `METRICS_LABEL_CARDINALITY_VALUE_LIMIT` and are at least `METRICS_LABEL_CARDINALITY_MIN_SHARE` of the distinct series. The share test flags the key that causes the growth, such as `user_id`, and not every key of a large metric. The sketches restart each `METRICS_SERIES_LABEL_INTERVAL_SECS` window and have about 6.5% error.
+A metric with `METRICS_LABEL_CARDINALITY_CANDIDATE_MIN_NEW_SERIES` new series in a gate window gets HyperLogLog sketches of its series and of each label key. A key is flagged when it has `METRICS_LABEL_CARDINALITY_VALUE_LIMIT` distinct values that are at least `METRICS_LABEL_CARDINALITY_MIN_SHARE` of the series. Redis shares the rules between pods. A rule expires `METRICS_LABEL_CARDINALITY_RULE_TTL_SECS` after its key drops under half the limit.
 
-A flagged key becomes a drop rule. Rules go to Redis (`capture-logs:metric-label-drop-rules:<hour>`, keyed by a hash of token and family, so no token is stored) and every pod pulls them each `METRICS_SERIES_REDIS_PULL_INTERVAL_SECS`. Detection reads rows before the drop, so it keeps measuring a dropped key. A rule is extended while its key stays over half the limit and expires `METRICS_LABEL_CARDINALITY_RULE_TTL_SECS` after that stops. The `posthog.original_timestamp` attributes and the protected keys are never flagged.
+In `enforce` mode each changed row gets a `posthog.dropped_labels` attribute that lists the dropped keys. The fingerprint and the billed bytes leave it out. A combined cumulative counter or gauge interleaves the samples of its original series, so its rates are not meaningful.
 
-In `enforce` mode the service removes the key from the row and computes the fingerprint again from the remaining labels, with the same recipe as the row builders, so a collapsed row joins the series that a row without the key gets. Remote-write applies the drop after the classic histogram fold, so native histograms stay whole. Each changed row gets a `posthog.dropped_labels` attribute, with the sorted, comma-joined dropped keys as its value, so the metrics UI can show which series were combined. The fingerprint leaves the marker out. Shadow mode adds no marker. The billed bytes count the labels left after the drop and do not count the marker.
-
-A collapsed series holds the samples of every original series. That is correct for delta sums and histograms. Cumulative counters and gauges of the original series are interleaved in one series, so a rate or last value over a collapsed cumulative series is not meaningful. The dropped key exists to stop a cardinality explosion, not to keep those series exact.
-
-Metrics: `capture_metrics_label_cardinality_rules_created` (with `token` and `mode`), `capture_metrics_label_cardinality_rows_dropped` (with `mode`; in shadow mode the rows that would change), `capture_metrics_label_cardinality_candidates` and `capture_metrics_label_cardinality_rules` (gauges), `capture_metrics_label_cardinality_candidates_full`, `capture_metrics_label_cardinality_keys_full`, `capture_metrics_label_cardinality_redis_pushed` and `capture_metrics_label_cardinality_redis_pulls` (with `outcome`). Each new rule is also logged at warn level with the token, family, key and estimates.
+Each new rule is logged at warn level. Metrics start with `capture_metrics_label_cardinality_`.
 
 ## Classic Prometheus histograms on remote write
 
