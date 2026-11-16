@@ -14,10 +14,14 @@ exemptions. **New chat** starts the version selected for the current project. De
 its local Tasks fixtures.
 
 Classic chat supports streamed responses, saved history, follow-up messages, stopping a reply,
-approving or rejecting a requested change, and inline chart and notebook previews.
+approving or rejecting a requested change, clarification forms, and inline chart and notebook previews.
 Unsupported chart and notebook content keeps an option to open it on the web.
 Assistant commentary that leads into tool calls, tool activity, and provider thinking share collapsed activity rows.
 The final standalone answer stays visible outside those rows.
+Clarification forms replace the composer until you submit answers or dismiss the form.
+They support single and multiple selections, custom answers when allowed, and composite text, number, dropdown, and toggle fields.
+Slider fields use numeric inputs with the requested bounds and step. Skip question leaves that question out of the response.
+Failed submissions keep your answers for another attempt. Unknown question or field types offer the web chat and Dismiss.
 Its composer omits the model and permission controls that only the Tasks runtime supports.
 The Chats list combines unlinked conversations and tasks. Conversations with a linked task use the task row. Classic
 conversation links use `conversationId`; Tasks links continue to use `taskId` and `runId`.
