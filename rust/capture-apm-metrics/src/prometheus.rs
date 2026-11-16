@@ -159,7 +159,9 @@ pub async fn export_prometheus_remote_write_http(
     let mut rows = fold_classic_histograms(rows, &write_request.metadata);
     // After the fold, so a dropped label leaves each native histogram whole and
     // the recomputed fingerprint can hash its bound set.
-    service.label_cardinality.observe(&token, &rows);
+    service
+        .label_cardinality
+        .observe(&token, &rows, FingerprintKind::RemoteWrite);
     let marked_rows =
         service
             .label_cardinality
@@ -167,9 +169,12 @@ pub async fn export_prometheus_remote_write_http(
     let (labelled, records_bytes) = service.series_label_gate.decide_metered(&token, &mut rows);
     // The dropped-labels marker is ours, so it is not billed.
     let records_bytes = records_bytes.saturating_sub(marked_rows * LABEL_BYTES);
-    service
-        .label_cardinality
-        .note_new_series(&token, &rows, labelled.new_series_rows());
+    service.label_cardinality.note_new_series(
+        &token,
+        &rows,
+        labelled.new_series_rows(),
+        FingerprintKind::RemoteWrite,
+    );
     let row_count = rows.len();
 
     if let Err(e) = service

@@ -28,6 +28,8 @@ This binary is the metrics half of [`capture-logs`](../capture-logs/README.md). 
 | METRICS_LABEL_CARDINALITY_CANDIDATE_MIN_NEW_SERIES | 500 | New series per window before a metric's labels are measured |
 | METRICS_LABEL_CARDINALITY_MAX_CANDIDATES | 2000 | Most metrics one pod measures |
 | METRICS_LABEL_CARDINALITY_MAX_KEYS_PER_METRIC | 32 | Most label keys one pod measures for one metric |
+| METRICS_LABEL_CARDINALITY_MAX_TRACKED_METRICS | 500000 | Most metrics one pod counts new series for |
+| METRICS_LABEL_CARDINALITY_MAX_TRACKED_METRICS_PER_TOKEN | 50000 | Most metrics one pod counts new series for, per token |
 | METRICS_LABEL_CARDINALITY_RULE_TTL_SECS | 7200 | Rule lifetime after its key was last over half the limit |
 | METRICS_LABEL_CARDINALITY_PROTECTED_KEYS | le,quantile | Label keys that are never dropped |
 

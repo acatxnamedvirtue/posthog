@@ -92,6 +92,20 @@ pub struct Config {
     #[envconfig(from = "METRICS_LABEL_CARDINALITY_MAX_KEYS_PER_METRIC", default = "32")]
     pub metrics_label_cardinality_max_keys_per_metric: usize,
 
+    /// Caps on the metric families one pod counts new series for. Ingestion
+    /// input drives this map, like the series cache.
+    #[envconfig(
+        from = "METRICS_LABEL_CARDINALITY_MAX_TRACKED_METRICS",
+        default = "500000"
+    )]
+    pub metrics_label_cardinality_max_tracked_metrics: usize,
+
+    #[envconfig(
+        from = "METRICS_LABEL_CARDINALITY_MAX_TRACKED_METRICS_PER_TOKEN",
+        default = "50000"
+    )]
+    pub metrics_label_cardinality_max_tracked_metrics_per_token: usize,
+
     #[envconfig(from = "METRICS_LABEL_CARDINALITY_RULE_TTL_SECS", default = "7200")]
     pub metrics_label_cardinality_rule_ttl_secs: u64,
 
@@ -112,6 +126,9 @@ impl Config {
             candidate_min_new_series: self.metrics_label_cardinality_candidate_min_new_series,
             max_candidates: self.metrics_label_cardinality_max_candidates,
             max_keys_per_candidate: self.metrics_label_cardinality_max_keys_per_metric,
+            max_tracked_metrics: self.metrics_label_cardinality_max_tracked_metrics,
+            max_tracked_metrics_per_token: self
+                .metrics_label_cardinality_max_tracked_metrics_per_token,
             rule_ttl: Duration::from_secs(self.metrics_label_cardinality_rule_ttl_secs),
             protected_keys: self
                 .metrics_label_cardinality_protected_keys
